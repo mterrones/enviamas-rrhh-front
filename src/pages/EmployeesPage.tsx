@@ -43,9 +43,11 @@ export default function EmployeesPage() {
           <h1 className="text-2xl font-bold">Empleados</h1>
           <p className="text-muted-foreground text-sm mt-1">Gestión del personal de EnviaMas</p>
         </div>
-        <Button className="gap-2">
-          <Plus className="w-4 h-4" /> Nuevo Empleado
-        </Button>
+        <Link to="/empleados/nuevo">
+          <Button className="gap-2">
+            <Plus className="w-4 h-4" /> Nuevo Empleado
+          </Button>
+        </Link>
       </div>
 
       {/* Filters */}
