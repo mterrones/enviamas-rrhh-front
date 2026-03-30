@@ -1,43 +1,51 @@
 
 
-## Plan: Módulo de Gestión de Perfiles y Permisos
+## Plan: Formulario de Creación de Nuevo Empleado
 
 ### Objetivo
-Crear una página dedicada de gestión de perfiles (roles) donde el Superadmin RRHH pueda ver, crear, editar y eliminar perfiles/roles con sus permisos asociados por módulo. Todo con data mock interactiva.
-
-### Estructura de la página `/perfiles`
-
-La página tendrá dos secciones principales:
-
-1. **Lista de Perfiles** — Tabla con los 4 roles del sistema, mostrando nombre del perfil, descripción, cantidad de usuarios asignados, cantidad de permisos activos y acciones (ver/editar/eliminar).
-
-2. **Detalle/Edición de Perfil** — Al hacer clic en un perfil o en "Nuevo Perfil", se abre una vista con:
-   - Nombre del perfil y descripción (editables)
-   - Matriz de permisos agrupada por módulo (Dashboard, Empleados, Asistencia, Boletas, Portal, Activos, Reportes, Configuración), donde cada módulo tiene sus acciones (ver, crear, editar, eliminar, aprobar, exportar, etc.) representadas como checkboxes/switches
-   - Indicador visual de cuántos permisos están activos por módulo
-   - Lista de usuarios asignados a ese perfil
-   - Botones Guardar/Cancelar
+Crear una página `/empleados/nuevo` con un formulario completo organizado en secciones que cubra todos los campos del perfil del empleado (datos personales, laborales, contacto, bancarios, documentos).
 
 ### Cambios por archivo
 
 | Archivo | Cambio |
 |---|---|
-| `src/pages/ProfilesPage.tsx` | **Nuevo** — Página completa con tabla de perfiles, modal/panel de edición con matriz de permisos por módulo usando switches, y listado de usuarios asignados |
-| `src/App.tsx` | Agregar ruta `/perfiles` |
-| `src/components/layout/AppSidebar.tsx` | Agregar ítem "Perfiles y Permisos" con icono `ShieldCheck`, vinculado al permiso `settings.profiles` |
-| `src/contexts/AuthContext.tsx` | Agregar permiso `settings.profiles` al rol `superadmin_rrhh` |
+| `src/pages/NewEmployeePage.tsx` | **Nuevo** — Formulario completo con secciones colapsables/cards |
+| `src/App.tsx` | Agregar ruta `/empleados/nuevo` (antes de `/empleados/:id`) |
+| `src/pages/EmployeesPage.tsx` | Cambiar botón "Nuevo Empleado" a `Link` hacia `/empleados/nuevo` |
 
-### Data mock
+### Estructura del formulario (`NewEmployeePage.tsx`)
 
-- 4 perfiles precargados con sus permisos actuales del `AuthContext`
-- Usuarios mock asignados a cada perfil
-- Módulos y acciones organizados en una estructura que permita renderizar la matriz de permisos dinámicamente
-- Estado local con `useState` para simular CRUD (crear, editar, eliminar perfiles y toggle de permisos)
+Página con enlace "Volver a empleados" y formulario organizado en cards:
 
-### Diseño visual
+**Card 1 — Datos Personales:**
+- Foto de perfil (upload placeholder)
+- Nombre completo, DNI, fecha de nacimiento, nivel de estudios, carrera
+- Carga de documentos: antecedentes policiales (PDF), CV (PDF)
 
-- Consistente con el resto de la app (Cards, Badges, Tables con el mismo estilo)
-- Switches naranjas para activar/desactivar permisos individuales
-- Badge con contador de permisos activos por módulo
-- Badge de color por tipo de perfil (naranja para superadmin, dorado para admin, etc.)
+**Card 2 — Datos de Contacto:**
+- Teléfono, correo, dirección
+- Contacto de emergencia: nombre y teléfono
+
+**Card 3 — Datos Bancarios:**
+- Banco (select), número de cuenta, sistema previsional (AFP/ONP select)
+
+**Card 4 — Datos Laborales:**
+- Puesto y área (selects con opciones: Contact Center, Chat Bot, Campañas, TI, Admin)
+- Modalidad (Full-time / Part-time)
+- Horario laboral
+- Sueldo
+- Tipo de contrato (Plazo Fijo, Indefinido, Locación de Servicios)
+- Fechas de inicio y fin de contrato
+- Carga de contrato PDF
+- Jefe directo (select con empleados existentes)
+- Estado inicial (select)
+
+**Acciones:** Botones "Cancelar" (vuelve a `/empleados`) y "Guardar Empleado" (muestra toast de éxito y redirige a la lista).
+
+### Detalles técnicos
+- Estado local con `useState` para cada campo del formulario
+- Selects para: área, puesto, modalidad, contrato, banco, previsión, estado, jefe
+- Toast de confirmación al guardar (mock)
+- Navegación con `useNavigate`
+- Estilo consistente con el resto de la app (Cards, Labels, Inputs, Selects)
 
