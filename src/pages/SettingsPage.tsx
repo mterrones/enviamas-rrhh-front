@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -5,9 +6,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Users, Mail, Shield, FileText, Database } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
-const users = [
+interface Usuario {
+  nombre: string;
+  email: string;
+  rol: string;
+  estado: string;
+}
+
+const initialUsers: Usuario[] = [
   { nombre: "Ana Castillo", email: "ana@enviam.as", rol: "Superadmin RRHH", estado: "Activo" },
   { nombre: "Carlos Mendoza", email: "carlos@enviam.as", rol: "Jefe de Área", estado: "Activo" },
   { nombre: "Lucía Fernández", email: "lucia@enviam.as", rol: "Admin RRHH", estado: "Activo" },
@@ -20,7 +31,46 @@ const auditLogs = [
   { fecha: "25/03/2026 09:15", usuario: "Ana Castillo", modulo: "Empleados", accion: "Nuevo registro", detalle: "Roberto Sánchez — Contact Center" },
 ];
 
+const areas = ["Contact Center", "Ventas", "Soporte", "Administración", "Logística", "Marketing"];
+
 export default function SettingsPage() {
+  const { toast } = useToast();
+  const [usuarios, setUsuarios] = useState<Usuario[]>(initialUsers);
+  const [showNuevoUsuario, setShowNuevoUsuario] = useState(false);
+
+  // Form fields
+  const [nombre, setNombre] = useState("");
+  const [email, setEmail] = useState("");
+  const [rol, setRol] = useState("");
+  const [area, setArea] = useState("");
+  const [password, setPassword] = useState("");
+
+  const resetForm = () => {
+    setNombre("");
+    setEmail("");
+    setRol("");
+    setArea("");
+    setPassword("");
+  };
+
+  const handleGuardar = () => {
+    if (!nombre.trim() || !email.trim() || !rol || !password.trim()) {
+      toast({ title: "Campos obligatorios", description: "Completa nombre, email, rol y contraseña.", variant: "destructive" });
+      return;
+    }
+    if (rol === "Jefe de Área" && !area) {
+      toast({ title: "Campo obligatorio", description: "Selecciona el área para el Jefe de Área.", variant: "destructive" });
+      return;
+    }
+
+    const rolLabel = rol === "Jefe de Área" ? `Jefe de Área${area ? ` — ${area}` : ""}` : rol;
+
+    setUsuarios(prev => [...prev, { nombre: nombre.trim(), email: email.trim(), rol: rolLabel, estado: "Activo" }]);
+    setShowNuevoUsuario(false);
+    resetForm();
+    toast({ title: "Usuario registrado", description: `${nombre.trim()} fue agregado como ${rolLabel}.` });
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
@@ -41,7 +91,7 @@ export default function SettingsPage() {
           <Card className="shadow-card">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-base">Gestión de Usuarios</CardTitle>
-              <Button size="sm">Nuevo Usuario</Button>
+              <Button size="sm" onClick={() => setShowNuevoUsuario(true)}>Nuevo Usuario</Button>
             </CardHeader>
             <CardContent className="p-0">
               <table className="w-full">
@@ -51,7 +101,7 @@ export default function SettingsPage() {
                   ))}
                 </tr></thead>
                 <tbody>
-                  {users.map(u => (
+                  {usuarios.map(u => (
                     <tr key={u.email} className="border-b border-border last:border-0">
                       <td className="px-5 py-3 text-sm font-medium">{u.nombre}</td>
                       <td className="px-5 py-3 text-sm text-muted-foreground">{u.email}</td>
@@ -143,6 +193,54 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Dialog Nuevo Usuario */}
+      <Dialog open={showNuevoUsuario} onOpenChange={(open) => { if (!open) { resetForm(); } setShowNuevoUsuario(open); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nuevo Usuario</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-sm">Nombre completo *</Label>
+              <Input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: María García" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Email *</Label>
+              <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@enviam.as" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Rol *</Label>
+              <Select value={rol} onValueChange={v => { setRol(v); if (v !== "Jefe de Área") setArea(""); }}>
+                <SelectTrigger><SelectValue placeholder="Seleccionar rol" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Admin RRHH">Admin RRHH</SelectItem>
+                  <SelectItem value="Jefe de Área">Jefe de Área</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {rol === "Jefe de Área" && (
+              <div className="space-y-1.5">
+                <Label className="text-sm">Área *</Label>
+                <Select value={area} onValueChange={setArea}>
+                  <SelectTrigger><SelectValue placeholder="Seleccionar área" /></SelectTrigger>
+                  <SelectContent>
+                    {areas.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label className="text-sm">Contraseña temporal *</Label>
+              <Input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { resetForm(); setShowNuevoUsuario(false); }}>Cancelar</Button>
+            <Button onClick={handleGuardar}>Registrar Usuario</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
