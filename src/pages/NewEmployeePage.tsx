@@ -21,6 +21,15 @@ const jefes = ["Ana Castillo", "Carlos Mendoza", "Pedro Ruiz"];
 export default function NewEmployeePage() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fotoPreview, setFotoPreview] = useState<string | null>(null);
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setFotoPreview(URL.createObjectURL(file));
+    }
+  };
 
   const [form, setForm] = useState({
     nombre: "", dni: "", fechaNacimiento: "", nivelEstudios: "", carrera: "",
