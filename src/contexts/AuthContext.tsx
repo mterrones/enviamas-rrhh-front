@@ -28,7 +28,7 @@ const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
     "portal.view",
     "assets.view", "assets.manage",
     "reports.view", "reports.export",
-    "settings.view", "settings.users", "settings.smtp", "settings.params", "settings.audit", "settings.backup",
+    "settings.view", "settings.users", "settings.smtp", "settings.params", "settings.audit", "settings.backup", "settings.profiles",
   ],
   admin_rrhh: [
     "dashboard.view",

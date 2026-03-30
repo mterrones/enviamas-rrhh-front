@@ -14,6 +14,7 @@ const navItems = [
   { label: "Portal del Empleado", icon: UserCircle, path: "/portal", permission: "portal.view" },
   { label: "Activos y Equipos", icon: Monitor, path: "/activos", permission: "assets.view" },
   { label: "Reportes", icon: BarChart3, path: "/reportes", permission: "reports.view" },
+  { label: "Perfiles y Permisos", icon: ShieldCheck, path: "/perfiles", permission: "settings.profiles" },
   { label: "Configuración", icon: Settings, path: "/configuracion", permission: "settings.view" },
 ];
 
