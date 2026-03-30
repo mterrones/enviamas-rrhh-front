@@ -1,25 +1,31 @@
 
 
-## Plan: Modal de Nuevo Usuario en Configuración
+## Plan: Notificaciones interactivas — clic para navegar, marcar como leída, eliminar
 
 ### Objetivo
-Agregar un Dialog al botón "Nuevo Usuario" en la pestaña Usuarios de Configuración, permitiendo registrar usuarios con rol Admin RRHH o Jefe de Área.
+Hacer que cada notificación: (1) navegue a la ruta correspondiente al hacer clic, (2) cambie visualmente a "leída" tras el clic, y (3) tenga un botón X para eliminarla. Actualizar el contador de no leídas en el TopBar.
 
-### Cambio único en `src/pages/SettingsPage.tsx`
+### Cambios en `src/components/notifications/NotificationsPanel.tsx`
 
-1. **Convertir a componente con estado**: agregar `useState` para `showNuevoUsuario`, campos del formulario (`nombre`, `email`, `rol`, `area`, `password`) y lista dinámica de usuarios
-2. **Dialog con formulario**:
-   - **Nombre completo** (Input)
-   - **Email** (Input type email)
-   - **Rol** (Select): Admin RRHH, Jefe de Área
-   - **Área** (Select, visible solo si rol = Jefe de Área): Contact Center, Ventas, Soporte, Administración, etc.
-   - **Contraseña temporal** (Input type password)
-3. **Al guardar**: agregar usuario a la lista local con estado "Activo", cerrar modal, toast de confirmación
-4. **Botón** → `onClick={() => setShowNuevoUsuario(true)}`
+1. **Estado local de notificaciones**: Convertir la lista estática en `useState` para poder mutar (marcar leídas, eliminar)
+2. **Agregar campo `link` a cada notificación**:
+   - "Contrato por vencer" → `/empleados`
+   - "Boleta disponible" → `/boletas`
+   - "Solicitud aprobada" → `/portal`
+   - "Nuevo empleado" → `/empleados`
+3. **Al hacer clic en una notificación**:
+   - Marcarla como `read: true` (cambia el fondo de `bg-accent/50` a transparente)
+   - Navegar a la ruta con `useNavigate()` y cerrar el panel
+4. **Botón X por notificación**: Agregar un icono X a la derecha de cada item que elimine esa notificación del estado (con `stopPropagation` para no activar la navegación)
+5. **Props nuevas**: Agregar `onUnreadCountChange` callback para que el TopBar refleje el conteo real de no leídas
+6. **Mensaje vacío**: Mostrar "Sin notificaciones" si la lista queda vacía
+
+### Cambios en `src/components/layout/TopBar.tsx`
+
+1. Reemplazar `unreadCount = 3` por un estado reactivo alimentado desde el callback del `NotificationsPanel`
+2. Pasar `onUnreadCountChange` al componente de notificaciones
 
 ### Imports adicionales
-- `Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter`
-- `Select, SelectContent, SelectItem, SelectTrigger, SelectValue`
-- `Textarea` (no necesario aquí), `useToast`
+- `useNavigate` de `react-router-dom`
 - `useState` de React
 
