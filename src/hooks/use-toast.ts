@@ -148,6 +148,9 @@ export function onToastAdded(listener: ToastListener): () => void {
 function toast({ ...props }: Toast) {
   const id = genId();
 
+  // Notify listeners (for NotificationsContext sync)
+  toastListeners.forEach(listener => listener(props));
+
   const update = (props: ToasterToast) =>
     dispatch({
       type: "UPDATE_TOAST",

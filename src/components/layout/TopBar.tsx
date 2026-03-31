@@ -5,16 +5,10 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import { NotificationsPanel, Notification } from "@/components/notifications/NotificationsPanel";
+import { NotificationsPanel } from "@/components/notifications/NotificationsPanel";
 import { RoleSwitcher } from "@/components/auth/RoleSwitcher";
 import { useAuth, ROLE_LABELS } from "@/contexts/AuthContext";
-
-const initialNotifications: Notification[] = [
-  { id: 1, type: "warning", title: "Contrato por vencer", description: "El contrato de Juan Pérez vence en 5 días", time: "Hace 2h", read: false, link: "/empleados" },
-  { id: 2, type: "info", title: "Boleta disponible", description: "Boleta de marzo 2026 lista para descarga", time: "Hace 4h", read: false, link: "/boletas" },
-  { id: 3, type: "success", title: "Solicitud aprobada", description: "Vacaciones de María López aprobadas", time: "Ayer", read: false, link: "/portal" },
-  { id: 4, type: "info", title: "Nuevo empleado", description: "Carlos Mendoza registrado en el sistema", time: "Hace 2 días", read: true, link: "/empleados" },
-];
+import { useNotifications } from "@/contexts/NotificationsContext";
 
 interface Props {
   onToggleSidebar: () => void;
@@ -22,10 +16,9 @@ interface Props {
 
 export function TopBar({ onToggleSidebar }: Props) {
   const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>(initialNotifications);
+  const { notifications, setNotifications, unreadCount } = useNotifications();
   const { user } = useAuth();
   const initials = user.nombre.split(" ").map(n => n[0]).join("").slice(0, 2);
-  const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
     <header className="h-16 bg-card border-b border-border flex items-center justify-between px-6 shrink-0">
