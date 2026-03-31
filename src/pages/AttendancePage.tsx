@@ -30,6 +30,8 @@ const meses = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
+const years = Array.from({ length: 11 }, (_, i) => 2020 + i);
+
 const generateDaysInMonth = (year: number, month: number) => {
   const totalDays = new Date(year, month + 1, 0).getDate();
   return Array.from({ length: totalDays }, (_, i) => {
@@ -41,7 +43,6 @@ const generateDaysInMonth = (year: number, month: number) => {
 
 const getFirstDayOffset = (year: number, month: number) => {
   const day = new Date(year, month, 1).getDay();
-  // Convert Sunday=0 to Monday-based: Mon=0, Tue=1, ..., Sun=6
   return day === 0 ? 6 : day - 1;
 };
 
@@ -67,8 +68,26 @@ export default function AttendancePage() {
   const [daysInMonth, setDaysInMonth] = useState(() => generateDaysInMonth(now.getFullYear(), now.getMonth()));
   const [firstDayOffset, setFirstDayOffset] = useState(() => getFirstDayOffset(now.getFullYear(), now.getMonth()));
 
-  const handleMonthYearChange = (year: string, month: string) => {
+  const [showNuevaSolicitud, setShowNuevaSolicitud] = useState(false);
+  const [solicitudes, setSolicitudes] = useState(initialVacationRequests);
+  const [selEmpleado, setSelEmpleado] = useState("");
+  const [fechaInicio, setFechaInicio] = useState<Date>();
+  const [fechaFin, setFechaFin] = useState<Date>();
+  const [motivo, setMotivo] = useState("");
+
+  const diasCalculados = fechaInicio && fechaFin ? Math.max(differenceInCalendarDays(fechaFin, fechaInicio) + 1, 0) : 0;
+
+  const handleYearChange = (year: string) => {
+    setSelectedYear(year);
     const y = parseInt(year);
+    const m = parseInt(selectedMonth);
+    setDaysInMonth(generateDaysInMonth(y, m));
+    setFirstDayOffset(getFirstDayOffset(y, m));
+  };
+
+  const handleMonthChange = (month: string) => {
+    setSelectedMonth(month);
+    const y = parseInt(selectedYear);
     const m = parseInt(month);
     setDaysInMonth(generateDaysInMonth(y, m));
     setFirstDayOffset(getFirstDayOffset(y, m));
@@ -123,13 +142,35 @@ export default function AttendancePage() {
             <CardHeader>
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <CardTitle className="text-base">Asistencia Mensual</CardTitle>
-                <div className="flex gap-2">
-                  <Select defaultValue="all"><SelectTrigger className="w-44"><SelectValue placeholder="Empleado" /></SelectTrigger>
-                    <SelectContent><SelectItem value="all">Todos</SelectItem><SelectItem value="1">Juan Pérez</SelectItem><SelectItem value="2">María López</SelectItem></SelectContent>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <Select value={selectedEmpleado} onValueChange={setSelectedEmpleado}>
+                    <SelectTrigger className="w-44"><SelectValue placeholder="Empleado" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      {empleadosMock.map(e => (
+                        <SelectItem key={e.id} value={e.id}>{e.nombre}</SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
-                  <Select defaultValue="03"><SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="01">Enero</SelectItem><SelectItem value="02">Febrero</SelectItem><SelectItem value="03">Marzo</SelectItem></SelectContent>
+                  <Select value={selectedYear} onValueChange={handleYearChange}>
+                    <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {years.map(y => (
+                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
+                  <Select value={selectedMonth} onValueChange={handleMonthChange}>
+                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {meses.map((m, i) => (
+                        <SelectItem key={i} value={String(i)}>{m}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={handleVerRegistro}>
+                    <Eye className="w-4 h-4" />Ver Registro
+                  </Button>
                 </div>
               </div>
             </CardHeader>
@@ -138,7 +179,7 @@ export default function AttendancePage() {
                 {["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"].map(d => (
                   <div key={d} className="text-xs font-semibold text-muted-foreground text-center py-1">{d}</div>
                 ))}
-                {Array.from({ length: 6 }).map((_, i) => <div key={`b-${i}`} />)}
+                {Array.from({ length: firstDayOffset }).map((_, i) => <div key={`b-${i}`} />)}
                 {daysInMonth.map((d) => (
                   <div key={d.day} className={`aspect-square rounded-md flex items-center justify-center text-xs font-medium cursor-pointer transition-transform hover:scale-105 ${statusColorMap[d.status]} text-primary-foreground`}>
                     {d.day}
