@@ -1,46 +1,29 @@
 
 
-## Plan: Sincronizar toasts con el panel de notificaciones
+## Plan: Mejorar navegación del calendario de asistencia
 
-### Objetivo
-Cada vez que se dispare un `toast()` en la app (al crear empleado, registrar activo, enviar solicitud, etc.), también se agregue automáticamente como notificación en el panel de la campana del TopBar.
+### Situación actual
+El calendario de asistencia tiene selectores estáticos de mes (solo Enero-Marzo hardcoded) y no tiene selector de año. No hay botón para ir al registro del empleado.
 
-### Enfoque
-Crear un contexto global de notificaciones (`NotificationsContext`) que:
-1. Mantenga la lista de notificaciones de forma global (no solo en TopBar)
-2. Exponga una función `addNotification` que se pueda llamar desde cualquier parte
-3. Intercepte los toasts para agregar notificaciones automáticamente
+### Cambios en `src/pages/AttendancePage.tsx`
 
-### Archivos a crear/modificar
+**1. Reemplazar selectores de mes/año**
+- Agregar un `Select` de año (rango 2020-2030) junto al selector de mes
+- Expandir el selector de mes para incluir los 12 meses del año
+- Ambos controlados con `useState`, inicializados al mes/año actual
 
-**1. Crear `src/contexts/NotificationsContext.tsx`**
-- Context con estado global de notificaciones y funciones: `addNotification`, `markAsRead`, `deleteNotification`
-- Incluir las notificaciones iniciales existentes
-- Función `addNotification(title, description, type, link?)` que genera un nuevo item con timestamp "Justo ahora"
+**2. Agregar botón "Ver registro"**
+- A la derecha de los selectores, agregar un `Button` con icono `FileText` o `Eye` y texto "Ver Registro"
+- Al hacer clic, navega a una vista/sección filtrada con el empleado seleccionado + año + mes
+- Si el empleado seleccionado es "Todos", mostrar toast indicando que debe seleccionar un empleado primero
 
-**2. Modificar `src/hooks/use-toast.ts`**
-- Agregar un listener global (`onToastAdded`) que el contexto de notificaciones pueda suscribirse
-- Cuando se dispara un toast (no destructive/error), emitir al listener con título y descripción
+**3. Generar datos del calendario dinámicamente**
+- Usar `new Date(year, month, 0).getDate()` para obtener días reales del mes seleccionado
+- Calcular el día de la semana en que inicia el mes para posicionar correctamente los días en la grilla
+- Regenerar los datos mock al cambiar mes/año
 
-**3. Modificar `src/components/layout/TopBar.tsx`**
-- Reemplazar el `useState` local de notificaciones por `useNotifications()` del contexto
-- Simplificar: el estado ahora vive en el contexto
-
-**4. Modificar `src/components/notifications/NotificationsPanel.tsx`**
-- Recibir las funciones del contexto vía props (sin cambios grandes, ya es controlado)
-
-**5. Modificar `src/App.tsx` o `src/main.tsx`**
-- Envolver la app con `NotificationsProvider`
-
-### Mapeo de tipo de toast a notificación
-- Toast normal → tipo "info", link según la ruta actual
-- Toast destructive → tipo "warning", sin agregar a notificaciones (son errores de validación)
-
-### Flujo
+### Estructura visual
 ```text
-Usuario guarda → toast({ title, description }) 
-  → use-toast dispatch + listener global
-  → NotificationsContext.addNotification()
-  → Campana muestra nuevo badge
+[Empleado ▼] [Año ▼] [Mes ▼]  [📄 Ver Registro]
 ```
 
