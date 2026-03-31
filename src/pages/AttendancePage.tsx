@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarCheck, FileText, Download, CalendarIcon, Eye } from "lucide-react";
+import { CalendarCheck, FileText, Download, CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format, differenceInCalendarDays } from "date-fns";
 import { es } from "date-fns/locale";
@@ -93,14 +93,6 @@ export default function AttendancePage() {
     setFirstDayOffset(getFirstDayOffset(y, m));
   };
 
-  const handleVerRegistro = () => {
-    if (selectedEmpleado === "all") {
-      toast({ title: "Selecciona un empleado", description: "Debes seleccionar un empleado específico para ver su registro.", variant: "destructive" });
-      return;
-    }
-    const empNombre = empleadosMock.find(e => e.id === selectedEmpleado)?.nombre || "";
-    toast({ title: "Registro de asistencia", description: `Mostrando registro de ${empNombre} — ${meses[parseInt(selectedMonth)]} ${selectedYear}` });
-  };
 
   const handleGuardar = () => {
     if (!selEmpleado || !fechaInicio || !fechaFin || diasCalculados <= 0) {
@@ -168,9 +160,6 @@ export default function AttendancePage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Button size="sm" variant="outline" className="gap-1.5" onClick={handleVerRegistro}>
-                    <Eye className="w-4 h-4" />Ver Registro
-                  </Button>
                 </div>
               </div>
             </CardHeader>
