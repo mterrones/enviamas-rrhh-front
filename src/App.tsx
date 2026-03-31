@@ -28,6 +28,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <AuthProvider>
+      <NotificationsProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
@@ -47,6 +48,7 @@ const App = () => (
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
+      </NotificationsProvider>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>
