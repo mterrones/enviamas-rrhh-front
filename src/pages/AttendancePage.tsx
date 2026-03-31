@@ -25,11 +25,25 @@ const statusColorMap: Record<string, string> = {
   vacaciones: "bg-purple",
 };
 
-const daysInMonth = Array.from({ length: 31 }, (_, i) => {
-  const r = Math.random();
-  const s = r > 0.90 ? "falta_nj" : r > 0.84 ? "falta_j" : r > 0.78 ? "tardanza_nj" : r > 0.74 ? "tardanza_j" : r > 0.70 ? "recuperacion" : r > 0.66 ? "vacaciones" : "asistido";
-  return { day: i + 1, status: s };
-});
+const meses = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+
+const generateDaysInMonth = (year: number, month: number) => {
+  const totalDays = new Date(year, month + 1, 0).getDate();
+  return Array.from({ length: totalDays }, (_, i) => {
+    const r = Math.random();
+    const s = r > 0.90 ? "falta_nj" : r > 0.84 ? "falta_j" : r > 0.78 ? "tardanza_nj" : r > 0.74 ? "tardanza_j" : r > 0.70 ? "recuperacion" : r > 0.66 ? "vacaciones" : "asistido";
+    return { day: i + 1, status: s };
+  });
+};
+
+const getFirstDayOffset = (year: number, month: number) => {
+  const day = new Date(year, month, 1).getDay();
+  // Convert Sunday=0 to Monday-based: Mon=0, Tue=1, ..., Sun=6
+  return day === 0 ? 6 : day - 1;
+};
 
 const empleadosMock = [
   { id: "1", nombre: "Juan Pérez" },
