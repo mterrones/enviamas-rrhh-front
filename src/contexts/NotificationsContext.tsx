@@ -40,7 +40,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       type,
       time: "Justo ahora",
       read: false,
-      link: link || window.location.pathname,
+      link: link || getModuleRoute(window.location.pathname),
     };
     setNotifications(prev => [newNotif, ...prev]);
   }, []);
