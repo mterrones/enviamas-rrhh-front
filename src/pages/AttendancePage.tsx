@@ -60,14 +60,28 @@ const initialVacationRequests = [
 
 export default function AttendancePage() {
   const { toast } = useToast();
-  const [showNuevaSolicitud, setShowNuevaSolicitud] = useState(false);
-  const [solicitudes, setSolicitudes] = useState(initialVacationRequests);
-  const [selEmpleado, setSelEmpleado] = useState("");
-  const [fechaInicio, setFechaInicio] = useState<Date>();
-  const [fechaFin, setFechaFin] = useState<Date>();
-  const [motivo, setMotivo] = useState("");
+  const now = new Date();
+  const [selectedYear, setSelectedYear] = useState(String(now.getFullYear()));
+  const [selectedMonth, setSelectedMonth] = useState(String(now.getMonth()));
+  const [selectedEmpleado, setSelectedEmpleado] = useState("all");
+  const [daysInMonth, setDaysInMonth] = useState(() => generateDaysInMonth(now.getFullYear(), now.getMonth()));
+  const [firstDayOffset, setFirstDayOffset] = useState(() => getFirstDayOffset(now.getFullYear(), now.getMonth()));
 
-  const diasCalculados = fechaInicio && fechaFin ? Math.max(differenceInCalendarDays(fechaFin, fechaInicio) + 1, 0) : 0;
+  const handleMonthYearChange = (year: string, month: string) => {
+    const y = parseInt(year);
+    const m = parseInt(month);
+    setDaysInMonth(generateDaysInMonth(y, m));
+    setFirstDayOffset(getFirstDayOffset(y, m));
+  };
+
+  const handleVerRegistro = () => {
+    if (selectedEmpleado === "all") {
+      toast({ title: "Selecciona un empleado", description: "Debes seleccionar un empleado específico para ver su registro.", variant: "destructive" });
+      return;
+    }
+    const empNombre = empleadosMock.find(e => e.id === selectedEmpleado)?.nombre || "";
+    toast({ title: "Registro de asistencia", description: `Mostrando registro de ${empNombre} — ${meses[parseInt(selectedMonth)]} ${selectedYear}` });
+  };
 
   const handleGuardar = () => {
     if (!selEmpleado || !fechaInicio || !fechaFin || diasCalculados <= 0) {
