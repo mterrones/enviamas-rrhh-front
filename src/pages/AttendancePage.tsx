@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarCheck, FileText, Download, CalendarIcon } from "lucide-react";
+import { CalendarCheck, FileText, Download, CalendarIcon, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format, differenceInCalendarDays } from "date-fns";
 import { es } from "date-fns/locale";
