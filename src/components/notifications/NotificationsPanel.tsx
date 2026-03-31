@@ -1,8 +1,7 @@
-import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { FileText, AlertTriangle, CheckCircle, X } from "lucide-react";
 
-interface Notification {
+export interface Notification {
   id: number;
   type: string;
   title: string;
@@ -11,13 +10,6 @@ interface Notification {
   read: boolean;
   link: string;
 }
-
-const initialNotifications: Notification[] = [
-  { id: 1, type: "warning", title: "Contrato por vencer", description: "El contrato de Juan Pérez vence en 5 días", time: "Hace 2h", read: false, link: "/empleados" },
-  { id: 2, type: "info", title: "Boleta disponible", description: "Boleta de marzo 2026 lista para descarga", time: "Hace 4h", read: false, link: "/boletas" },
-  { id: 3, type: "success", title: "Solicitud aprobada", description: "Vacaciones de María López aprobadas", time: "Ayer", read: false, link: "/portal" },
-  { id: 4, type: "info", title: "Nuevo empleado", description: "Carlos Mendoza registrado en el sistema", time: "Hace 2 días", read: true, link: "/empleados" },
-];
 
 const iconMap = {
   warning: AlertTriangle,
@@ -32,27 +24,23 @@ const colorMap = {
 };
 
 interface Props {
+  notifications: Notification[];
+  onNotificationsChange: (notifications: Notification[]) => void;
   onClose: () => void;
-  onUnreadCountChange: (count: number) => void;
 }
 
-export function NotificationsPanel({ onClose, onUnreadCountChange }: Props) {
-  const [notifications, setNotifications] = useState<Notification[]>(initialNotifications);
+export function NotificationsPanel({ notifications, onNotificationsChange, onClose }: Props) {
   const navigate = useNavigate();
 
-  useEffect(() => {
-    onUnreadCountChange(notifications.filter(n => !n.read).length);
-  }, [notifications, onUnreadCountChange]);
-
   const handleClick = (n: Notification) => {
-    setNotifications(prev => prev.map(item => item.id === n.id ? { ...item, read: true } : item));
+    onNotificationsChange(notifications.map(item => item.id === n.id ? { ...item, read: true } : item));
     navigate(n.link);
     onClose();
   };
 
   const handleDelete = (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
-    setNotifications(prev => prev.filter(item => item.id !== id));
+    onNotificationsChange(notifications.filter(item => item.id !== id));
   };
 
   return (
