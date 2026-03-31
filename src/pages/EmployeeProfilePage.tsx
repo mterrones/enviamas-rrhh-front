@@ -94,9 +94,10 @@ export default function EmployeeProfilePage() {
                 <Separator />
                 <div className="space-y-2">
                   <p className="text-sm font-medium">Documentos</p>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Button variant="outline" size="sm" className="gap-1.5 text-xs"><Upload className="w-3.5 h-3.5" />Antecedentes (PDF)</Button>
                     <Button variant="outline" size="sm" className="gap-1.5 text-xs"><Upload className="w-3.5 h-3.5" />CV (PDF)</Button>
+                    <Button variant="outline" size="sm" className="gap-1.5 text-xs"><Upload className="w-3.5 h-3.5" />Examen Médico (PDF)</Button>
                   </div>
                 </div>
               </CardContent>

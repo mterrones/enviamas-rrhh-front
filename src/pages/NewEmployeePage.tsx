@@ -110,13 +110,17 @@ export default function NewEmployeePage() {
               <Input placeholder="Ej: Ing. Sistemas" value={form.carrera} onChange={e => update("carrera", e.target.value)} />
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
             <div className="space-y-2">
               <Label>Antecedentes policiales (PDF)</Label>
               <Input type="file" accept=".pdf" className="cursor-pointer" />
             </div>
             <div className="space-y-2">
               <Label>CV (PDF)</Label>
+              <Input type="file" accept=".pdf" className="cursor-pointer" />
+            </div>
+            <div className="space-y-2">
+              <Label>Examen Médico Ocupacional (PDF)</Label>
               <Input type="file" accept=".pdf" className="cursor-pointer" />
             </div>
           </div>
