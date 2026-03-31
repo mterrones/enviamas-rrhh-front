@@ -72,7 +72,7 @@ export function NotificationsPanel({ onClose, onUnreadCountChange }: Props) {
               <div
                 key={n.id}
                 onClick={() => handleClick(n)}
-                className={`flex gap-3 p-4 border-b border-border last:border-0 cursor-pointer hover:bg-muted/50 transition-colors ${!n.read ? 'bg-accent/50' : ''}`}
+                className={`flex gap-3 p-4 border-b border-border last:border-0 cursor-pointer hover:bg-muted/50 transition-colors ${!n.read ? 'bg-muted' : 'bg-card'}`}
               >
                 <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${color}`} />
                 <div className="min-w-0 flex-1">
