@@ -1,4 +1,14 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
+import type { components } from "@/api/contracts";
+import { apiRequest, ApiHttpError } from "@/api/client";
+import { clearAuthToken, getAuthToken, setAuthToken } from "@/api/authToken";
 
 export type AppRole = "superadmin_rrhh" | "admin_rrhh" | "jefe_area" | "empleado";
 
@@ -8,7 +18,12 @@ export interface User {
   email: string;
   avatar?: string;
   rol: AppRole;
+  permissions?: string[];
   area?: string;
+  employee?: {
+    id: number;
+    fullName: string;
+  };
 }
 
 export const ROLE_LABELS: Record<AppRole, string> = {
@@ -18,10 +33,30 @@ export const ROLE_LABELS: Record<AppRole, string> = {
   empleado: "Empleado",
 };
 
-// Permissions per module/action
+const APP_ROLES: AppRole[] = ["superadmin_rrhh", "admin_rrhh", "jefe_area", "empleado"];
+
+function toAppUser(me: components["schemas"]["UserMe"]): User {
+  const rol: AppRole =
+    me.role && APP_ROLES.includes(me.role as AppRole) ? (me.role as AppRole) : "empleado";
+
+  return {
+    id: String(me.id),
+    nombre: me.name,
+    email: me.email,
+    avatar: me.avatar_path ?? undefined,
+    rol,
+    permissions: Array.isArray(me.permissions) ? me.permissions : undefined,
+    area: me.department?.name,
+    employee: me.employee
+      ? { id: me.employee.id, fullName: me.employee.full_name }
+      : undefined,
+  };
+}
+
 const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
   superadmin_rrhh: [
     "dashboard.view",
+    "portal.view",
     "employees.view", "employees.create", "employees.edit", "employees.delete", "employees.offboard",
     "attendance.view", "attendance.manage", "attendance.approve",
     "payroll.view", "payroll.generate", "payroll.send",
@@ -54,35 +89,97 @@ const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
 };
 
 interface AuthContextType {
-  user: User;
+  user: User | null;
+  initializing: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  loginWithToken: (token: string) => Promise<void>;
+  logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
   hasAnyPermission: (permissions: string[]) => boolean;
-  switchRole: (role: AppRole) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const MOCK_USERS: Record<AppRole, User> = {
-  superadmin_rrhh: { id: "1", nombre: "Ana Castillo", email: "ana@enviam.as", rol: "superadmin_rrhh" },
-  admin_rrhh: { id: "2", nombre: "Lucía Fernández", email: "lucia@enviam.as", rol: "admin_rrhh" },
-  jefe_area: { id: "3", nombre: "Carlos Mendoza", email: "carlos@enviam.as", rol: "jefe_area", area: "Contact Center" },
-  empleado: { id: "4", nombre: "Juan Pérez", email: "juan@enviam.as", rol: "empleado", area: "Contact Center" },
-};
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [currentRole, setCurrentRole] = useState<AppRole>("superadmin_rrhh");
-  const user = MOCK_USERS[currentRole];
+  const [user, setUser] = useState<User | null>(null);
+  const [initializing, setInitializing] = useState(true);
 
-  const hasPermission = (permission: string) =>
-    ROLE_PERMISSIONS[user.rol]?.includes(permission) ?? false;
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token) {
+      setInitializing(false);
+      return;
+    }
 
-  const hasAnyPermission = (permissions: string[]) =>
-    permissions.some((p) => hasPermission(p));
+    (async () => {
+      try {
+        const res = await apiRequest<components["schemas"]["UserMeEnvelope"]>("/auth/me");
+        setUser(toAppUser(res.data));
+      } catch {
+        clearAuthToken();
+        setUser(null);
+      } finally {
+        setInitializing(false);
+      }
+    })();
+  }, []);
 
-  const switchRole = (role: AppRole) => setCurrentRole(role);
+  const login = useCallback(async (email: string, password: string) => {
+    const res = await apiRequest<components["schemas"]["LoginEnvelope"]>("/auth/login", {
+      method: "POST",
+      body: { email, password },
+      skipAuth: true,
+    });
+    setAuthToken(res.data.token);
+    setUser(toAppUser(res.data.user));
+  }, []);
+
+  const loginWithToken = useCallback(async (token: string) => {
+    setAuthToken(token);
+    const res = await apiRequest<components["schemas"]["UserMeEnvelope"]>("/auth/me");
+    setUser(toAppUser(res.data));
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await apiRequest<void>("/auth/logout", { method: "POST" });
+    } catch {
+      clearAuthToken();
+      setUser(null);
+      return;
+    }
+    clearAuthToken();
+    setUser(null);
+  }, []);
+
+  const hasPermission = useCallback(
+    (permission: string) => {
+      if (!user) return false;
+      if (user.permissions !== undefined) {
+        return user.permissions.includes(permission);
+      }
+      return ROLE_PERMISSIONS[user.rol]?.includes(permission) ?? false;
+    },
+    [user],
+  );
+
+  const hasAnyPermission = useCallback(
+    (permissions: string[]) => permissions.some((p) => hasPermission(p)),
+    [hasPermission],
+  );
 
   return (
-    <AuthContext.Provider value={{ user, hasPermission, hasAnyPermission, switchRole }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        initializing,
+        login,
+        loginWithToken,
+        logout,
+        hasPermission,
+        hasAnyPermission,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

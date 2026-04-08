@@ -1,0 +1,3 @@
+export const DEFAULT_LIST_PAGE_SIZE = 20;
+
+export const AGGREGATION_PAGE_SIZE = 100;

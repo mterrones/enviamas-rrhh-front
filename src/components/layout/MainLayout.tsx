@@ -7,11 +7,11 @@ export function MainLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
-    <div className="flex min-h-screen bg-muted/30">
+    <div className="flex h-dvh min-h-0 overflow-hidden bg-muted/30">
       <AppSidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <TopBar onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)} />
-        <main className="flex-1 p-6 overflow-auto">
+        <main className="min-h-0 flex-1 overflow-y-auto p-6">
           <Outlet />
         </main>
       </div>

@@ -1,5 +1,6 @@
 import { Bell, LogOut, Menu } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,9 +17,32 @@ interface Props {
 
 export function TopBar({ onToggleSidebar }: Props) {
   const [showNotifications, setShowNotifications] = useState(false);
-  const { notifications, setNotifications, unreadCount } = useNotifications();
-  const { user } = useAuth();
-  const initials = user.nombre.split(" ").map(n => n[0]).join("").slice(0, 2);
+  const notificationsWrapRef = useRef<HTMLDivElement>(null);
+  const { unreadCount } = useNotifications();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+  const initials = user?.nombre?.split(" ").map((n) => n[0]).join("").slice(0, 2) ?? "?";
+
+  useEffect(() => {
+    if (!showNotifications) return;
+
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      if (notificationsWrapRef.current?.contains(target)) return;
+      const el = target instanceof Element ? target : null;
+      if (
+        el?.closest("[data-radix-menu-content]") ||
+        el?.closest("[data-radix-dropdown-menu-content]")
+      ) {
+        return;
+      }
+      setShowNotifications(false);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [showNotifications]);
 
   return (
     <header className="h-16 bg-card border-b border-border flex items-center justify-between px-6 shrink-0">
@@ -35,7 +59,7 @@ export function TopBar({ onToggleSidebar }: Props) {
         <RoleSwitcher />
 
         {/* Notifications */}
-        <div className="relative">
+        <div ref={notificationsWrapRef} className="relative">
           <Button
             variant="ghost"
             size="icon"
@@ -49,13 +73,7 @@ export function TopBar({ onToggleSidebar }: Props) {
               </span>
             )}
           </Button>
-          {showNotifications && (
-            <NotificationsPanel
-              notifications={notifications}
-              onNotificationsChange={setNotifications}
-              onClose={() => setShowNotifications(false)}
-            />
-          )}
+          {showNotifications && <NotificationsPanel onClose={() => setShowNotifications(false)} />}
         </div>
 
         {/* User menu */}
@@ -68,13 +86,19 @@ export function TopBar({ onToggleSidebar }: Props) {
                 </AvatarFallback>
               </Avatar>
               <div className="text-left hidden sm:block">
-                <p className="text-sm font-medium leading-tight">{user.nombre}</p>
-                <p className="text-xs text-muted-foreground">{ROLE_LABELS[user.rol]}</p>
+                <p className="text-sm font-medium leading-tight">{user?.nombre}</p>
+                <p className="text-xs text-muted-foreground">{user ? ROLE_LABELS[user.rol] : ""}</p>
               </div>
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem className="text-destructive cursor-pointer">
+            <DropdownMenuItem
+              className="text-destructive cursor-pointer"
+              onClick={async () => {
+                await logout();
+                navigate("/login", { replace: true });
+              }}
+            >
               <LogOut className="w-4 h-4 mr-2" />
               Cerrar sesión
             </DropdownMenuItem>
