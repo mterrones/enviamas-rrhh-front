@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ListPaginationBar } from "@/components/ListPaginationBar";
-import { Users, Mail, Shield, FileText, Database, Building2, Pencil, Trash2 } from "lucide-react";
+import { Users, Mail, Shield, FileText, Database, Building2, Pencil, Trash2, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { components } from "@/api/contracts";
 import { ApiHttpError } from "@/api/client";
@@ -29,7 +29,7 @@ import {
   type LegalParameterListItem,
 } from "@/api/legalParameters";
 import { fetchMailSettings, sendMailTest, updateMailSettings } from "@/api/mailSettings";
-import { createUser, fetchUsersPage, setUserActive, updateUser, type UserAdminUpdate } from "@/api/users";
+import { createUserInvitation, fetchUsersPage, setUserActive, updateUser, type UserAdminUpdate } from "@/api/users";
 import { ROLE_LABELS, type AppRole, useAuth } from "@/contexts/AuthContext";
 import { DEFAULT_LIST_PAGE_SIZE } from "@/constants/pagination";
 
@@ -64,6 +64,12 @@ function formatUserCreatedAt(iso: string | null | undefined): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" });
+}
+
+function buildInviteAbsoluteUrl(invitePath: string): string {
+  const path = invitePath.startsWith("/") ? invitePath : `/${invitePath}`;
+  if (globalThis.window === undefined) return path;
+  return `${globalThis.window.location.origin}${path}`;
 }
 
 function formatApiValidationMessage(err: ApiHttpError): string {
@@ -131,6 +137,7 @@ export default function SettingsPage() {
   const [userFormOpen, setUserFormOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<components["schemas"]["UserAdmin"] | null>(null);
   const [userFormSubmitting, setUserFormSubmitting] = useState(false);
+  const [inviteCreated, setInviteCreated] = useState<{ inviteUrl: string; expiresAt: string } | null>(null);
   const [activeToggleUserId, setActiveToggleUserId] = useState<number | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [departmentsLoading, setDepartmentsLoading] = useState(true);
@@ -361,14 +368,12 @@ export default function SettingsPage() {
   const [email, setEmail] = useState("");
   const [rol, setRol] = useState("");
   const [departmentId, setDepartmentId] = useState("");
-  const [password, setPassword] = useState("");
 
   const resetForm = () => {
     setNombre("");
     setEmail("");
     setRol("");
     setDepartmentId("");
-    setPassword("");
   };
 
   useEffect(() => {
@@ -378,25 +383,23 @@ export default function SettingsPage() {
       setEmail(editingUser.email);
       setRol(editingUser.role ?? "");
       setDepartmentId(editingUser.department_id != null ? String(editingUser.department_id) : "");
-      setPassword("");
     } else {
       resetForm();
     }
   }, [userFormOpen, editingUser]);
 
   const handleGuardar = async () => {
-    if (!nombre.trim() || !email.trim() || !rol) {
-      toast({ title: "Campos obligatorios", description: "Completa nombre, email y rol.", variant: "destructive" });
-      return;
-    }
     const isEdit = editingUser != null;
-    if (!isEdit && !password.trim()) {
-      toast({ title: "Campos obligatorios", description: "Completa nombre, email, rol y contraseña.", variant: "destructive" });
-      return;
-    }
-    if (password.trim().length > 0 && password.length < 8) {
-      toast({ title: "Contraseña", description: "La contraseña debe tener al menos 8 caracteres.", variant: "destructive" });
-      return;
+    if (isEdit) {
+      if (!nombre.trim() || !email.trim() || !rol) {
+        toast({ title: "Campos obligatorios", description: "Completa nombre, email y rol.", variant: "destructive" });
+        return;
+      }
+    } else {
+      if (!email.trim() || !rol) {
+        toast({ title: "Campos obligatorios", description: "Completa email y rol.", variant: "destructive" });
+        return;
+      }
     }
     if (rol === "jefe_area" && !departmentId) {
       toast({ title: "Campo obligatorio", description: "Selecciona el área para el Jefe de Área.", variant: "destructive" });
@@ -417,40 +420,41 @@ export default function SettingsPage() {
           role_id: roleRow.id,
           department_id: rol === "jefe_area" ? Number.parseInt(departmentId, 10) : null,
         };
-        if (password.trim().length > 0) {
-          body.password = password;
-        }
         await updateUser(editingUser.id, body);
         toast({ title: "Usuario actualizado", description: "Los cambios se guardaron correctamente." });
       } else {
-        await createUser({
-          name: nombre.trim(),
+        const inv = await createUserInvitation({
           email: email.trim(),
-          password,
           role_id: roleRow.id,
           department_id: rol === "jefe_area" ? Number.parseInt(departmentId, 10) : null,
         });
-        toast({ title: "Usuario creado", description: "El usuario se registró correctamente." });
+        const inviteUrl = buildInviteAbsoluteUrl(inv.data.invite_path);
+        setInviteCreated({ inviteUrl, expiresAt: inv.data.expires_at });
+        toast({
+          title: "Invitación creada",
+          description: "Comparte el enlace con el usuario para que complete el registro con Google.",
+        });
+        resetForm();
+        if (usersPage !== 1) {
+          setUsersPage(1);
+        } else {
+          await loadUsersTab();
+        }
+        return;
       }
       setUserFormOpen(false);
       setEditingUser(null);
       resetForm();
-      if (isEdit) {
-        await loadUsersTab();
-      } else if (usersPage !== 1) {
-        setUsersPage(1);
-      } else {
-        await loadUsersTab();
-      }
+      await loadUsersTab();
     } catch (e) {
       const msg =
         e instanceof ApiHttpError
           ? formatApiValidationMessage(e)
           : isEdit
             ? "No se pudo actualizar el usuario"
-            : "No se pudo crear el usuario";
+            : "No se pudo crear la invitación";
       toast({
-        title: isEdit ? "Error al actualizar usuario" : "Error al crear usuario",
+        title: isEdit ? "Error al actualizar usuario" : "Error al crear invitación",
         description: msg,
         variant: "destructive",
       });
@@ -709,6 +713,7 @@ export default function SettingsPage() {
                   type="button"
                   onClick={() => {
                     setEditingUser(null);
+                    setInviteCreated(null);
                     setUserFormOpen(true);
                   }}
                 >
@@ -766,6 +771,7 @@ export default function SettingsPage() {
                                 className="text-xs text-primary"
                                 type="button"
                                 onClick={() => {
+                                  setInviteCreated(null);
                                   setEditingUser(u);
                                   setUserFormOpen(true);
                                 }}
@@ -1241,24 +1247,59 @@ export default function SettingsPage() {
           if (!open) {
             resetForm();
             setEditingUser(null);
+            setInviteCreated(null);
           }
           setUserFormOpen(open);
         }}
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{editingUser ? "Editar usuario" : "Nuevo Usuario"}</DialogTitle>
+            <DialogTitle>
+              {inviteCreated
+                ? "Invitación lista"
+                : editingUser
+                  ? "Editar usuario"
+                  : "Invitar usuario"}
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label className="text-sm">Nombre completo *</Label>
-              <Input
-                value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
-                placeholder="Ej: María García"
-                disabled={userFormSubmitting}
-              />
+          {inviteCreated ? (
+            <div className="space-y-4 py-2">
+              <p className="text-sm text-muted-foreground">
+                Comparte este enlace. El usuario debe registrarse con Google usando el mismo correo invitado. Caduca:{" "}
+                {formatUserCreatedAt(inviteCreated.expiresAt)}
+              </p>
+              <div className="flex gap-2">
+                <Input readOnly value={inviteCreated.inviteUrl} className="font-mono text-xs" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  title="Copiar enlace"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(inviteCreated.inviteUrl).then(() => {
+                      toast({ title: "Copiado", description: "El enlace está en el portapapeles." });
+                    });
+                  }}
+                >
+                  <Copy className="w-4 h-4" />
+                </Button>
+              </div>
             </div>
+          ) : null}
+          {!inviteCreated ? (
+          <div className="space-y-4 py-2">
+            {editingUser ? (
+              <div className="space-y-1.5">
+                <Label className="text-sm">Nombre completo *</Label>
+                <Input
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                  placeholder="Ej: María García"
+                  disabled={userFormSubmitting}
+                />
+              </div>
+            ) : null}
             <div className="space-y-1.5">
               <Label className="text-sm">Email *</Label>
               <Input
@@ -1268,6 +1309,9 @@ export default function SettingsPage() {
                 placeholder="usuario@enviam.as"
                 disabled={userFormSubmitting}
               />
+              {!editingUser ? (
+                <p className="text-xs text-muted-foreground">Debe coincidir con la cuenta Google del invitado.</p>
+              ) : null}
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm">Rol *</Label>
@@ -1318,32 +1362,37 @@ export default function SettingsPage() {
                 ) : null}
               </div>
             )}
-            <div className="space-y-1.5">
-              <Label className="text-sm">{editingUser ? "Nueva contraseña (opcional)" : "Contraseña temporal *"}</Label>
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={editingUser ? "Dejar vacío para no cambiar" : "Mínimo 8 caracteres"}
-                disabled={userFormSubmitting}
-              />
-            </div>
           </div>
+          ) : null}
           <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={userFormSubmitting}
-              onClick={() => {
-                resetForm();
-                setEditingUser(null);
-                setUserFormOpen(false);
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button disabled={userFormSubmitting} onClick={() => void handleGuardar()}>
-              {userFormSubmitting ? "Guardando…" : editingUser ? "Guardar cambios" : "Registrar Usuario"}
-            </Button>
+            {inviteCreated ? (
+              <Button
+                onClick={() => {
+                  setInviteCreated(null);
+                  resetForm();
+                  setUserFormOpen(false);
+                }}
+              >
+                Cerrar
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  disabled={userFormSubmitting}
+                  onClick={() => {
+                    resetForm();
+                    setEditingUser(null);
+                    setUserFormOpen(false);
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button disabled={userFormSubmitting} onClick={() => void handleGuardar()}>
+                  {userFormSubmitting ? "Guardando…" : editingUser ? "Guardar cambios" : "Crear invitación"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

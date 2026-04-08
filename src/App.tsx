@@ -22,6 +22,7 @@ import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import ProfilesPage from "./pages/ProfilesPage";
 import LoginPage from "./pages/LoginPage";
+import InviteAcceptPage from "./pages/InviteAcceptPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -37,6 +38,7 @@ const App = () => (
         <InactivitySessionWatcher />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/invitar/:token" element={<InviteAcceptPage />} />
           <Route element={<RequireAuth />}>
             <Route element={<MainLayout />}>
               <Route path="/" element={<HomeEntry />} />

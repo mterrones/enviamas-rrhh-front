@@ -345,6 +345,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create user invitation (SSO Google only)
+         * @description Requires settings.users. The invitee completes registration via /invitar/:token.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UserInvitationCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserInvitationEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                422: components["responses"]["ValidationError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/{id}": {
         parameters: {
             query?: never;
@@ -2617,6 +2663,22 @@ export interface components {
         };
         UserAdminEnvelope: {
             data: components["schemas"]["UserAdmin"];
+        };
+        UserInvitationCreate: {
+            /** Format: email */
+            email: string;
+            role_id: number;
+            department_id?: number | null;
+        };
+        UserInvitationCreated: {
+            invite_token: string;
+            /** @example /invitar/abc... */
+            invite_path: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        UserInvitationEnvelope: {
+            data: components["schemas"]["UserInvitationCreated"];
         };
         PermissionListItem: {
             id: number;

@@ -7,7 +7,7 @@ import {
   ReactNode,
 } from "react";
 import type { components } from "@/api/contracts";
-import { apiRequest, ApiHttpError } from "@/api/client";
+import { apiRequest } from "@/api/client";
 import { clearAuthToken, getAuthToken, setAuthToken } from "@/api/authToken";
 
 export type AppRole = "superadmin_rrhh" | "admin_rrhh" | "jefe_area" | "empleado";
@@ -91,7 +91,6 @@ const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
 interface AuthContextType {
   user: User | null;
   initializing: boolean;
-  login: (email: string, password: string) => Promise<void>;
   loginWithToken: (token: string) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
@@ -122,16 +121,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setInitializing(false);
       }
     })();
-  }, []);
-
-  const login = useCallback(async (email: string, password: string) => {
-    const res = await apiRequest<components["schemas"]["LoginEnvelope"]>("/auth/login", {
-      method: "POST",
-      body: { email, password },
-      skipAuth: true,
-    });
-    setAuthToken(res.data.token);
-    setUser(toAppUser(res.data.user));
   }, []);
 
   const loginWithToken = useCallback(async (token: string) => {
@@ -173,7 +162,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         initializing,
-        login,
         loginWithToken,
         logout,
         hasPermission,

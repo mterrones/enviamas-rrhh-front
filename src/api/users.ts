@@ -31,6 +31,15 @@ export async function createUser(body: UserAdminCreate) {
   });
 }
 
+export type UserInvitationCreate = components["schemas"]["UserInvitationCreate"];
+
+export async function createUserInvitation(body: UserInvitationCreate) {
+  return apiRequest<components["schemas"]["UserInvitationEnvelope"]>("/users/invitations", {
+    method: "POST",
+    body,
+  });
+}
+
 export type UserAdminUpdate = components["schemas"]["UserAdminUpdate"];
 
 export async function updateUser(userId: number, body: UserAdminUpdate) {

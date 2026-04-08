@@ -1,30 +1,17 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { buildApiUrl } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { INACTIVE_LOGOUT_SESSION_KEY } from "@/constants/inactivity";
 import { oauthErrorMessage } from "@/lib/oauthErrors";
-
-function readInactiveLogoutFlag(): boolean {
-  try {
-    if (globalThis.sessionStorage?.getItem(INACTIVE_LOGOUT_SESSION_KEY) === "1") {
-      globalThis.sessionStorage?.removeItem(INACTIVE_LOGOUT_SESSION_KEY);
-      return true;
-    }
-  } catch {
-    /* ignore */
-  }
-  return false;
-}
 
 const GOOGLE_AUTH_ENABLED = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === "true";
 
-export default function LoginPage() {
+export default function InviteAcceptPage() {
+  const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const { loginWithToken, user, initializing } = useAuth();
-  const [inactiveLogout] = useState(readInactiveLogoutFlag);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -46,8 +33,8 @@ export default function LoginPage() {
       return;
     }
     const sp = new URLSearchParams(h.startsWith("#") ? h.slice(1) : h);
-    const token = sp.get("token");
-    if (!token) {
+    const t = sp.get("token");
+    if (!t) {
       return;
     }
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -55,10 +42,10 @@ export default function LoginPage() {
       setSubmitting(true);
       setError(null);
       try {
-        await loginWithToken(token);
+        await loginWithToken(t);
         navigate("/", { replace: true });
       } catch {
-        setError("No se pudo completar el inicio de sesión con Google.");
+        setError("No se pudo completar el registro con Google.");
       } finally {
         setSubmitting(false);
       }
@@ -73,8 +60,22 @@ export default function LoginPage() {
     );
   }
 
+  if (!token?.trim()) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
+        <Card className="w-full max-w-md shadow-card-hover">
+          <CardContent className="p-8">
+            <p className="text-sm text-destructive text-center" role="alert">
+              Enlace de invitación no válido.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/30">
+    <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-md shadow-card-hover">
         <CardContent className="p-8 flex flex-col items-center space-y-6">
           <div className="flex items-center gap-3">
@@ -82,25 +83,18 @@ export default function LoginPage() {
               <span className="text-primary-foreground font-bold text-lg">EM</span>
             </div>
             <div>
-              <h1 className="text-xl font-bold">EnviaMas RRHH</h1>
-              <p className="text-xs text-muted-foreground">Plataforma de Recursos Humanos</p>
+              <h1 className="text-xl font-bold">Invitación</h1>
+              <p className="text-xs text-muted-foreground">EnviaMas RRHH</p>
             </div>
           </div>
-
-          <p className="text-center text-sm text-muted-foreground w-full">
-            Inicia sesión con tu cuenta Google del dominio autorizado.
+          <p className="text-center text-sm text-muted-foreground">
+            Completa tu registro con la cuenta de Google asociada al correo invitado. No podrás usar otra cuenta.
           </p>
-          {inactiveLogout ? (
-            <p className="text-center text-sm text-muted-foreground w-full" role="status">
-              Sesión cerrada por inactividad. Vuelve a iniciar sesión.
-            </p>
-          ) : null}
           {error ? (
-            <p className="text-sm text-destructive text-center w-full" role="alert">
+            <p className="text-sm text-destructive text-center" role="alert">
               {error}
             </p>
           ) : null}
-
           {GOOGLE_AUTH_ENABLED ? (
             <Button
               type="button"
@@ -108,7 +102,8 @@ export default function LoginPage() {
               size="lg"
               disabled={submitting}
               onClick={() => {
-                window.location.href = buildApiUrl("/auth/google/redirect");
+                const q = new URLSearchParams({ invite_token: token.trim() });
+                window.location.href = buildApiUrl(`/auth/google/redirect?${q.toString()}`);
               }}
             >
               {submitting ? "Procesando…" : "Continuar con Google"}
@@ -118,10 +113,6 @@ export default function LoginPage() {
               El acceso con Google no está habilitado en este entorno.
             </p>
           )}
-
-          <p className="text-xs text-muted-foreground text-center">
-            © 2026 EnviaMas S.A.C. — Tecnología de Comunicaciones
-          </p>
         </CardContent>
       </Card>
     </div>
