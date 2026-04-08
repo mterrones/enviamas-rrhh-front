@@ -14,13 +14,16 @@ import {
   createEmployee,
   fetchEmployee,
   fetchAllEmployees,
+  fetchLinkableUsers,
   updateEmployee,
   type Employee,
   type EmployeeWrite,
+  type LinkableUserOption,
 } from "@/api/employees";
 import { uploadEmployeeDocument, type EmployeeDocumentType } from "@/api/employeeDocuments";
 import { fetchEmployeePhotoBlob, uploadEmployeePhoto } from "@/api/employeePhotos";
 import type { components } from "@/api/contracts";
+import { cn } from "@/lib/utils";
 
 type FormDocumentSlot = Extract<
   EmployeeDocumentType,
@@ -107,6 +110,7 @@ type FormState = {
   fechaFin: string;
   managerId: string;
   estado: string;
+  linkedUserId: string;
 };
 
 function emptyForm(): FormState {
@@ -134,6 +138,7 @@ function emptyForm(): FormState {
     fechaFin: "",
     managerId: "__none__",
     estado: "activo",
+    linkedUserId: "__none__",
   };
 }
 
@@ -167,6 +172,7 @@ function employeeToForm(e: Employee): FormState {
     fechaFin: toInputDate(e.contract_end),
     managerId: e.manager_id != null ? String(e.manager_id) : "__none__",
     estado: e.status ?? "activo",
+    linkedUserId: e.user_id != null ? String(e.user_id) : "__none__",
   };
 }
 
@@ -197,6 +203,9 @@ function buildPayloadForCreate(form: FormState): EmployeeWrite {
   if (form.tipoContrato) payload.contract_type = form.tipoContrato;
   if (form.fechaInicio) payload.contract_start = form.fechaInicio;
   if (form.fechaFin) payload.contract_end = form.fechaFin;
+  if (form.linkedUserId && form.linkedUserId !== "__none__") {
+    payload.user_id = Number(form.linkedUserId);
+  }
   return payload;
 }
 
@@ -229,6 +238,7 @@ function buildPayloadForUpdate(form: FormState): EmployeeWrite {
   payload.contract_type = form.tipoContrato || null;
   payload.contract_start = form.fechaInicio || null;
   payload.contract_end = form.fechaFin || null;
+  payload.user_id = form.linkedUserId && form.linkedUserId !== "__none__" ? Number(form.linkedUserId) : null;
   return payload;
 }
 
@@ -250,13 +260,14 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
       URL.revokeObjectURL(previewUrlRef.current);
       previewUrlRef.current = null;
     }
-    if (url) {
+    if (url?.startsWith("blob:")) {
       previewUrlRef.current = url;
     }
     setFotoPreview(url);
   }, []);
   const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
   const [managers, setManagers] = useState<{ id: number; full_name: string }[]>([]);
+  const [linkableUsers, setLinkableUsers] = useState<LinkableUserOption[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [recordLoading, setRecordLoading] = useState(mode === "edit");
   const [recordError, setRecordError] = useState<string | null>(null);
@@ -297,6 +308,12 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
       if (mode === "create") {
         const emps = await fetchAllEmployees();
         setManagers(emps.map((e) => ({ id: e.id, full_name: e.full_name })));
+        try {
+          const lu = await fetchLinkableUsers();
+          setLinkableUsers(lu.data);
+        } catch {
+          setLinkableUsers([]);
+        }
       }
     } catch {
       toast({
@@ -356,6 +373,12 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
           }
         }
         if (!cancelled) setManagers(list);
+        try {
+          const lu = await fetchLinkableUsers(e.user_id ?? undefined);
+          if (!cancelled) setLinkableUsers(lu.data);
+        } catch {
+          if (!cancelled) setLinkableUsers([]);
+        }
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof ApiHttpError ? err.apiError?.message ?? err.message : "No se pudo cargar el empleado";
@@ -372,6 +395,34 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
   }, [mode, employeeId, reloadKey, setPreviewUrl]);
 
   const update = (key: string, value: string) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const lockPersonalFromLink = mode === "create" && form.linkedUserId !== "__none__";
+
+  const handleLinkedUserChange = (value: string) => {
+    if (mode === "edit") {
+      update("linkedUserId", value);
+      return;
+    }
+    if (value === "__none__") {
+      setForm((prev) => ({ ...prev, linkedUserId: value }));
+      setFotoFile(null);
+      setPreviewUrl(null);
+      return;
+    }
+    const u = linkableUsers.find((x) => String(x.id) === value);
+    if (!u) {
+      update("linkedUserId", value);
+      return;
+    }
+    setForm((prev) => ({
+      ...prev,
+      linkedUserId: value,
+      nombre: u.name,
+      correo: u.email,
+    }));
+    setFotoFile(null);
+    setPreviewUrl(u.avatar_path?.trim() ? u.avatar_path : null);
+  };
 
   const handleSave = async () => {
     if (!form.nombre.trim() || !form.dni.trim()) {
@@ -509,6 +560,34 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
         <>
           <Card className="shadow-card">
             <CardHeader>
+              <CardTitle className="text-lg">Usuario del sistema</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 max-w-xl">
+              <div className="space-y-2">
+                <Label>Cuenta vinculada</Label>
+                <Select value={form.linkedUserId} onValueChange={handleLinkedUserChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar usuario" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Sin vincular</SelectItem>
+                    {linkableUsers.map((u) => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.name} ({u.email})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Vincula la ficha al usuario que inicia sesión para habilitar el portal del empleado (boletas, asistencias propias,
+                  etc.). En alta nueva, al elegir una cuenta se rellenan nombre, correo y foto desde el perfil vinculado.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-card">
+            <CardHeader>
               <CardTitle className="text-lg">Datos Personales</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -520,11 +599,24 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                     <Upload className="w-6 h-6 text-muted-foreground" />
                   )}
                 </div>
-                <input type="file" accept="image/*" ref={fileInputRef} onChange={handlePhotoChange} className="hidden" />
-                <Button variant="outline" size="sm" type="button" onClick={() => fileInputRef.current?.click()}>
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={fileInputRef}
+                  onChange={handlePhotoChange}
+                  className="hidden"
+                  disabled={lockPersonalFromLink}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={lockPersonalFromLink}
+                >
                   {fotoPreview ? "Cambiar foto" : "Subir foto"}
                 </Button>
-                {fotoPreview ? (
+                {fotoPreview && !lockPersonalFromLink ? (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -541,7 +633,13 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Nombre completo</Label>
-                  <Input placeholder="Ej: Juan Pérez García" value={form.nombre} onChange={(e) => update("nombre", e.target.value)} />
+                  <Input
+                    placeholder="Ej: Juan Pérez García"
+                    value={form.nombre}
+                    onChange={(e) => update("nombre", e.target.value)}
+                    readOnly={lockPersonalFromLink}
+                    className={cn(lockPersonalFromLink && "bg-muted")}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>DNI</Label>
@@ -625,7 +723,14 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                 </div>
                 <div className="space-y-2">
                   <Label>Correo electrónico</Label>
-                  <Input type="email" placeholder="Ej: juan@enviamas.pe" value={form.correo} onChange={(e) => update("correo", e.target.value)} />
+                  <Input
+                    type="email"
+                    placeholder="Ej: juan@enviamas.pe"
+                    value={form.correo}
+                    onChange={(e) => update("correo", e.target.value)}
+                    readOnly={lockPersonalFromLink}
+                    className={cn(lockPersonalFromLink && "bg-muted")}
+                  />
                 </div>
                 <div className="space-y-2 md:col-span-2 lg:col-span-1">
                   <Label>Dirección</Label>
@@ -835,3 +940,4 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
     </div>
   );
 }
+

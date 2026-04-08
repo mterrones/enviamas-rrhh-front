@@ -35,10 +35,12 @@ function initialsFromName(name: string): string {
 function EmployeeListAvatar({
   employeeId,
   photoPath,
+  linkedUserAvatarPath,
   fullName,
 }: {
   employeeId: number;
   photoPath?: string | null;
+  linkedUserAvatarPath?: string | null;
   fullName: string;
 }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
@@ -81,9 +83,17 @@ function EmployeeListAvatar({
     };
   }, [employeeId, photoPath]);
 
+  const fallbackUrl = linkedUserAvatarPath?.trim() ? linkedUserAvatarPath.trim() : null;
+  const showStoredPhoto = Boolean(objectUrl);
+  const showLinkedAvatar = !showStoredPhoto && Boolean(fallbackUrl);
+
   return (
     <Avatar className="w-8 h-8">
-      {objectUrl ? <AvatarImage src={objectUrl} alt={fullName} className="object-cover" /> : null}
+      {showStoredPhoto ? (
+        <AvatarImage src={objectUrl!} alt={fullName} className="object-cover" />
+      ) : showLinkedAvatar ? (
+        <AvatarImage src={fallbackUrl!} alt={fullName} className="object-cover" />
+      ) : null}
       <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
         {initialsFromName(fullName)}
       </AvatarFallback>
@@ -259,7 +269,12 @@ export default function EmployeesPage() {
                     <tr key={emp.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
-                          <EmployeeListAvatar employeeId={emp.id} photoPath={emp.photo_path} fullName={emp.full_name} />
+                          <EmployeeListAvatar
+                            employeeId={emp.id}
+                            photoPath={emp.photo_path}
+                            linkedUserAvatarPath={emp.linked_user_avatar_path}
+                            fullName={emp.full_name}
+                          />
                           <span className="text-sm font-medium">{emp.full_name}</span>
                         </div>
                       </td>

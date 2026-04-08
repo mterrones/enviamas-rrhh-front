@@ -65,6 +65,19 @@ export async function fetchEmployee(id: number) {
   return apiRequest<components["schemas"]["EmployeeEnvelope"]>(`/employees/${id}`);
 }
 
+export type LinkableUserOption = {
+  id: number;
+  name: string;
+  email: string;
+  avatar_path?: string | null;
+};
+
+export async function fetchLinkableUsers(includeUserId?: number) {
+  const q =
+    includeUserId != null && includeUserId > 0 ? `?include_user_id=${includeUserId}` : "";
+  return apiRequest<{ data: LinkableUserOption[] }>(`/employees/linkable-users${q}`);
+}
+
 export type EmployeeTermination = components["schemas"]["EmployeeTermination"];
 
 export async function fetchEmployeeTermination(

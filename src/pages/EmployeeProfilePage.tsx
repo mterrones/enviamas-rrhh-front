@@ -615,6 +615,8 @@ export default function EmployeeProfilePage() {
             <Avatar className="w-20 h-20">
               {photoObjectUrl ? (
                 <AvatarImage src={photoObjectUrl} alt={e.full_name} className="object-cover" />
+              ) : e.linked_user_avatar_path?.trim() ? (
+                <AvatarImage src={e.linked_user_avatar_path.trim()} alt={e.full_name} className="object-cover" />
               ) : null}
               <AvatarFallback className="bg-primary text-primary-foreground text-2xl font-bold">
                 {initialsFromName(e.full_name)}

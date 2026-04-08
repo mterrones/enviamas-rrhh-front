@@ -138,6 +138,10 @@ export default function EmployeePortalPage() {
   const [vacationLoading, setVacationLoading] = useState(false);
   const [vacationError, setVacationError] = useState<string | null>(null);
 
+  const [vacationBalance, setVacationBalance] = useState<VacationBalanceData | null>(null);
+  const [vacationBalanceLoading, setVacationBalanceLoading] = useState(false);
+  const [vacationBalanceError, setVacationBalanceError] = useState<string | null>(null);
+
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [attendanceError, setAttendanceError] = useState<string | null>(null);

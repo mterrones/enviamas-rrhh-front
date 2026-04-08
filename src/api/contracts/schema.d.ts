@@ -2119,6 +2119,8 @@ export interface components {
             contract_end?: string | null;
             status: components["schemas"]["EmployeeStatus"];
             photo_path?: string | null;
+            /** @description Public avatar URL of linked system user (e.g. Google); for UI when photo_path is empty */
+            linked_user_avatar_path?: string | null;
             /** Format: date-time */
             created_at?: string | null;
             /** Format: date-time */
