@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Upload, Save } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import {
 import { uploadEmployeeDocument, type EmployeeDocumentType } from "@/api/employeeDocuments";
 import { fetchEmployeePhotoBlob, uploadEmployeePhoto } from "@/api/employeePhotos";
 import type { components } from "@/api/contracts";
+import { formatEmployeeName } from "@/lib/employeeName";
 import { cn } from "@/lib/utils";
 
 type FormDocumentSlot = Extract<
@@ -67,11 +68,14 @@ async function uploadPendingEmployeeDocuments(
   return failed;
 }
 
-const puestos = ["Operador", "Supervisor", "Jefe de Área", "Desarrolladora", "Soporte TI", "Asistente RRHH", "QA Tester"];
 const bancos = ["BCP", "BBVA", "Interbank", "Scotiabank", "BanBif", "Caja Arequipa"];
 const previsiones = ["AFP Integra", "AFP Prima", "AFP Profuturo", "AFP Habitat", "ONP"];
 const contratos = ["Plazo Fijo", "Indefinido", "Locación de Servicios"];
-const modalidades = ["Full-time", "Part-time"];
+const modalidades = [
+  "Full Time (09:00 - 18:45)",
+  "Part Time (09:00 - 14:00)",
+  "Part Time (14:00 - 18:45)",
+];
 const estados = ["activo", "suspendido", "vacaciones", "cesado"];
 const estudios = ["Secundaria", "Técnico", "Universitario", "Postgrado"];
 
@@ -86,14 +90,22 @@ function customCatalogOptionItem(value: string, known: string[]) {
 
 export type EmployeeFormMode = "create" | "edit";
 
+type DepartmentOption = {
+  id: number;
+  name: string;
+  positions: { id: number; name: string }[];
+};
+
 type FormState = {
   nombre: string;
+  apellido: string;
   dni: string;
   fechaNacimiento: string;
   nivelEstudios: string;
   carrera: string;
   telefono: string;
-  correo: string;
+  correoElectronico: string;
+  correoPersonal: string;
   direccion: string;
   contactoEmergenciaNombre: string;
   contactoEmergenciaTelefono: string;
@@ -103,7 +115,6 @@ type FormState = {
   puesto: string;
   departmentId: string;
   modalidad: string;
-  horario: string;
   sueldo: string;
   tipoContrato: string;
   fechaInicio: string;
@@ -116,12 +127,14 @@ type FormState = {
 function emptyForm(): FormState {
   return {
     nombre: "",
+    apellido: "",
     dni: "",
     fechaNacimiento: "",
     nivelEstudios: "",
     carrera: "",
     telefono: "",
-    correo: "",
+    correoElectronico: "",
+    correoPersonal: "",
     direccion: "",
     contactoEmergenciaNombre: "",
     contactoEmergenciaTelefono: "",
@@ -131,7 +144,6 @@ function emptyForm(): FormState {
     puesto: "",
     departmentId: "__no_dept__",
     modalidad: "",
-    horario: "",
     sueldo: "",
     tipoContrato: "",
     fechaInicio: "",
@@ -149,13 +161,15 @@ function toInputDate(val?: string | null): string {
 
 function employeeToForm(e: Employee): FormState {
   return {
-    nombre: e.full_name ?? "",
+    nombre: e.first_name ?? "",
+    apellido: e.last_name ?? "",
     dni: e.dni ?? "",
     fechaNacimiento: toInputDate(e.birth_date),
     nivelEstudios: e.education_level ?? "",
     carrera: e.degree ?? "",
     telefono: e.phone ?? "",
-    correo: e.personal_email ?? "",
+    correoElectronico: e.corporate_email?.trim() ?? "",
+    correoPersonal: e.personal_email ?? "",
     direccion: e.address ?? "",
     contactoEmergenciaNombre: e.emergency_contact_name ?? "",
     contactoEmergenciaTelefono: e.emergency_contact_phone ?? "",
@@ -165,7 +179,6 @@ function employeeToForm(e: Employee): FormState {
     puesto: e.position ?? "",
     departmentId: e.department_id != null ? String(e.department_id) : "__no_dept__",
     modalidad: e.modality ?? "",
-    horario: e.schedule ?? "",
     sueldo: e.salary != null && e.salary !== "" ? String(e.salary) : "",
     tipoContrato: e.contract_type ?? "",
     fechaInicio: toInputDate(e.contract_start),
@@ -179,7 +192,8 @@ function employeeToForm(e: Employee): FormState {
 function buildPayloadForCreate(form: FormState): EmployeeWrite {
   const salaryNum = form.sueldo.trim() === "" ? undefined : Number(form.sueldo);
   const payload: EmployeeWrite = {
-    full_name: form.nombre.trim(),
+    first_name: form.nombre.trim(),
+    last_name: form.apellido.trim(),
     dni: form.dni.trim(),
     status: form.estado as components["schemas"]["EmployeeStatus"],
   };
@@ -189,7 +203,7 @@ function buildPayloadForCreate(form: FormState): EmployeeWrite {
   if (form.nivelEstudios) payload.education_level = form.nivelEstudios;
   if (form.carrera) payload.degree = form.carrera;
   if (form.telefono) payload.phone = form.telefono;
-  if (form.correo) payload.personal_email = form.correo;
+  if (form.correoPersonal.trim()) payload.personal_email = form.correoPersonal.trim();
   if (form.direccion) payload.address = form.direccion;
   if (form.contactoEmergenciaNombre) payload.emergency_contact_name = form.contactoEmergenciaNombre;
   if (form.contactoEmergenciaTelefono) payload.emergency_contact_phone = form.contactoEmergenciaTelefono;
@@ -198,7 +212,6 @@ function buildPayloadForCreate(form: FormState): EmployeeWrite {
   if (form.prevision) payload.pension_fund = form.prevision;
   if (form.puesto) payload.position = form.puesto;
   if (form.modalidad) payload.modality = form.modalidad;
-  if (form.horario) payload.schedule = form.horario;
   if (salaryNum != null && !Number.isNaN(salaryNum)) payload.salary = salaryNum;
   if (form.tipoContrato) payload.contract_type = form.tipoContrato;
   if (form.fechaInicio) payload.contract_start = form.fechaInicio;
@@ -209,13 +222,18 @@ function buildPayloadForCreate(form: FormState): EmployeeWrite {
   return payload;
 }
 
-function buildPayloadForUpdate(form: FormState): EmployeeWrite {
+function buildPayloadForUpdate(form: FormState): Partial<EmployeeWrite> {
   const salaryNum = form.sueldo.trim() === "" ? undefined : Number(form.sueldo);
-  const payload: EmployeeWrite = {
-    full_name: form.nombre.trim(),
+  const identityLocked = form.linkedUserId !== "__none__";
+  const payload: Partial<EmployeeWrite> = {
     dni: form.dni.trim(),
     status: form.estado as components["schemas"]["EmployeeStatus"],
   };
+  if (!identityLocked) {
+    payload.first_name = form.nombre.trim();
+    payload.last_name = form.apellido.trim();
+  }
+  payload.personal_email = form.correoPersonal.trim() || null;
   payload.department_id =
     form.departmentId && form.departmentId !== "__no_dept__" ? Number(form.departmentId) : null;
   payload.manager_id =
@@ -224,7 +242,6 @@ function buildPayloadForUpdate(form: FormState): EmployeeWrite {
   payload.education_level = form.nivelEstudios || null;
   payload.degree = form.carrera || null;
   payload.phone = form.telefono || null;
-  payload.personal_email = form.correo || null;
   payload.address = form.direccion || null;
   payload.emergency_contact_name = form.contactoEmergenciaNombre || null;
   payload.emergency_contact_phone = form.contactoEmergenciaTelefono || null;
@@ -233,7 +250,7 @@ function buildPayloadForUpdate(form: FormState): EmployeeWrite {
   payload.pension_fund = form.prevision || null;
   payload.position = form.puesto || null;
   payload.modality = form.modalidad || null;
-  payload.schedule = form.horario || null;
+  payload.schedule = null;
   payload.salary = salaryNum != null && !Number.isNaN(salaryNum) ? salaryNum : null;
   payload.contract_type = form.tipoContrato || null;
   payload.contract_start = form.fechaInicio || null;
@@ -265,8 +282,8 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
     }
     setFotoPreview(url);
   }, []);
-  const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
-  const [managers, setManagers] = useState<{ id: number; full_name: string }[]>([]);
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [managers, setManagers] = useState<{ id: number; first_name: string; last_name: string }[]>([]);
   const [linkableUsers, setLinkableUsers] = useState<LinkableUserOption[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [recordLoading, setRecordLoading] = useState(mode === "edit");
@@ -304,10 +321,16 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
     setCatalogLoading(true);
     try {
       const depts = await fetchDepartments();
-      setDepartments(depts.map((d) => ({ id: d.id, name: d.name })));
+      setDepartments(
+        depts.map((d) => ({
+          id: d.id,
+          name: d.name,
+          positions: d.positions ?? [],
+        })),
+      );
       if (mode === "create") {
         const emps = await fetchAllEmployees();
-        setManagers(emps.map((e) => ({ id: e.id, full_name: e.full_name })));
+        setManagers(emps.map((e) => ({ id: e.id, first_name: e.first_name, last_name: e.last_name })));
         try {
           const lu = await fetchLinkableUsers();
           setLinkableUsers(lu.data);
@@ -343,31 +366,48 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
         const e = empRes.data;
         setFotoFile(null);
         setForm(employeeToForm(e));
-        setDepartments(depts.map((d) => ({ id: d.id, name: d.name })));
+        setDepartments(
+          depts.map((d) => ({
+            id: d.id,
+            name: d.name,
+            positions: d.positions ?? [],
+          })),
+        );
 
+        let employeePhotoBlobUrl: string | null = null;
         if (e.photo_path) {
           try {
             const blob = await fetchEmployeePhotoBlob(employeeId);
             if (!cancelled) {
-              setPreviewUrl(URL.createObjectURL(blob));
+              employeePhotoBlobUrl = URL.createObjectURL(blob);
             }
           } catch {
-            if (!cancelled) {
-              setPreviewUrl(null);
-            }
+            employeePhotoBlobUrl = null;
           }
-        } else if (!cancelled) {
-          setPreviewUrl(null);
+        }
+        if (!cancelled) {
+          if (employeePhotoBlobUrl) {
+            setPreviewUrl(employeePhotoBlobUrl);
+          } else {
+            const linkedAvatar = e.linked_user_avatar_path?.trim();
+            setPreviewUrl(linkedAvatar || null);
+          }
         }
 
         const emps = await fetchAllEmployees();
         if (cancelled) return;
-        let list = emps.filter((x) => x.id !== employeeId).map((x) => ({ id: x.id, full_name: x.full_name }));
+        let list = emps
+          .filter((x) => x.id !== employeeId)
+          .map((x) => ({ id: x.id, first_name: x.first_name, last_name: x.last_name }));
 
         if (e.manager_id != null && !list.some((m) => m.id === e.manager_id)) {
           try {
             const mgr = await fetchEmployee(e.manager_id);
-            if (!cancelled) list = [...list, { id: mgr.data.id, full_name: mgr.data.full_name }];
+            if (!cancelled)
+              list = [
+                ...list,
+                { id: mgr.data.id, first_name: mgr.data.first_name, last_name: mgr.data.last_name },
+              ];
           } catch {
             /* omit */
           }
@@ -396,15 +436,49 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
 
   const update = (key: string, value: string) => setForm((prev) => ({ ...prev, [key]: value }));
 
-  const lockPersonalFromLink = mode === "create" && form.linkedUserId !== "__none__";
+  const updateDepartmentId = useCallback(
+    (v: string) => {
+      setForm((prev) => {
+        let nextPuesto = prev.puesto;
+        if (v === "__no_dept__") {
+          nextPuesto = "";
+        } else {
+          const dept = departments.find((d) => String(d.id) === v);
+          const names = (dept?.positions ?? []).map((p) => p.name);
+          if (names.length > 0 && nextPuesto && !names.includes(nextPuesto)) {
+            nextPuesto = "";
+          }
+        }
+        return { ...prev, departmentId: v, puesto: nextPuesto };
+      });
+    },
+    [departments],
+  );
+
+  const positionOptionsForDepartment = useMemo(() => {
+    if (form.departmentId === "__no_dept__") return [];
+    const dept = departments.find((d) => String(d.id) === form.departmentId);
+    return (dept?.positions ?? []).map((p) => p.name);
+  }, [form.departmentId, departments]);
+
+  const lockPersonalFromLink = form.linkedUserId !== "__none__";
 
   const handleLinkedUserChange = (value: string) => {
     if (mode === "edit") {
-      update("linkedUserId", value);
+      if (value === "__none__") {
+        setForm((prev) => ({ ...prev, linkedUserId: value, correoElectronico: "" }));
+        return;
+      }
+      const u = linkableUsers.find((x) => String(x.id) === value);
+      setForm((prev) => ({
+        ...prev,
+        linkedUserId: value,
+        correoElectronico: u?.email?.trim() ?? "",
+      }));
       return;
     }
     if (value === "__none__") {
-      setForm((prev) => ({ ...prev, linkedUserId: value }));
+      setForm((prev) => ({ ...prev, linkedUserId: value, correoElectronico: "" }));
       setFotoFile(null);
       setPreviewUrl(null);
       return;
@@ -414,19 +488,24 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
       update("linkedUserId", value);
       return;
     }
+    const trimmed = u.name.trim();
+    const sp = trimmed.indexOf(" ");
+    const nombreFromUser = sp === -1 ? trimmed : trimmed.slice(0, sp).trim();
+    const apellidoFromUser = sp === -1 ? "" : trimmed.slice(sp + 1).trim();
     setForm((prev) => ({
       ...prev,
       linkedUserId: value,
-      nombre: u.name,
-      correo: u.email,
+      nombre: nombreFromUser,
+      apellido: apellidoFromUser,
+      correoElectronico: u.email?.trim() ?? "",
     }));
     setFotoFile(null);
     setPreviewUrl(u.avatar_path?.trim() ? u.avatar_path : null);
   };
 
   const handleSave = async () => {
-    if (!form.nombre.trim() || !form.dni.trim()) {
-      toast({ title: "Campos obligatorios", description: "Nombre y DNI son obligatorios.", variant: "destructive" });
+    if (!form.nombre.trim() || !form.apellido.trim() || !form.dni.trim()) {
+      toast({ title: "Campos obligatorios", description: "Nombre, apellido y DNI son obligatorios.", variant: "destructive" });
       return;
     }
     setSaving(true);
@@ -455,11 +534,14 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
         } else if (photoUploadFailed) {
           toast({
             title: "Empleado creado",
-            description: `${form.nombre.trim()} fue registrado, pero la foto no se pudo subir: ${photoErrorDetail ?? "error"}. Puedes intentarlo desde la edición.`,
+            description: `${formatEmployeeName({ first_name: form.nombre, last_name: form.apellido })} fue registrado, pero la foto no se pudo subir: ${photoErrorDetail ?? "error"}. Puedes intentarlo desde la edición.`,
             variant: "destructive",
           });
         } else {
-          toast({ title: "Empleado creado", description: `${form.nombre.trim()} fue registrado correctamente.` });
+          toast({
+            title: "Empleado creado",
+            description: `${formatEmployeeName({ first_name: form.nombre, last_name: form.apellido })} fue registrado correctamente.`,
+          });
         }
         navigate(`/empleados/${newId}`);
       } else if (employeeId != null) {
@@ -469,7 +551,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
         setPendingDocuments(emptyPendingDocuments());
         let photoUploadFailed = false;
         let photoErrorDetail: string | null = null;
-        if (fotoFile) {
+        if (fotoFile && !lockPersonalFromLink) {
           try {
             await uploadEmployeePhoto(employeeId, fotoFile);
           } catch (e) {
@@ -580,7 +662,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   Vincula la ficha al usuario que inicia sesión para habilitar el portal del empleado (boletas, asistencias propias,
-                  etc.). En alta nueva, al elegir una cuenta se rellenan nombre, correo y foto desde el perfil vinculado.
+                  etc.). En alta nueva, al elegir una cuenta se rellenan nombre, correo electrónico corporativo y foto desde el perfil vinculado.
                 </p>
               </div>
             </CardContent>
@@ -594,49 +676,61 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
               <div className="flex items-center gap-4 mb-2">
                 <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center border-2 border-dashed border-border overflow-hidden">
                   {fotoPreview ? (
-                    <img src={fotoPreview} alt="Foto del empleado" className="w-full h-full object-cover" />
+                    <img
+                      src={fotoPreview}
+                      alt="Foto del empleado"
+                      className="w-full h-full object-cover"
+                      referrerPolicy={fotoPreview.startsWith("http") ? "no-referrer" : undefined}
+                    />
                   ) : (
                     <Upload className="w-6 h-6 text-muted-foreground" />
                   )}
                 </div>
-                <input
-                  type="file"
-                  accept="image/*"
-                  ref={fileInputRef}
-                  onChange={handlePhotoChange}
-                  className="hidden"
-                  disabled={lockPersonalFromLink}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={lockPersonalFromLink}
-                >
-                  {fotoPreview ? "Cambiar foto" : "Subir foto"}
-                </Button>
-                {fotoPreview && !lockPersonalFromLink ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    type="button"
-                    onClick={() => {
-                      setFotoFile(null);
-                      setPreviewUrl(null);
-                    }}
-                  >
-                    Quitar
-                  </Button>
+                {!lockPersonalFromLink ? (
+                  <>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      ref={fileInputRef}
+                      onChange={handlePhotoChange}
+                      className="hidden"
+                    />
+                    <Button variant="outline" size="sm" type="button" onClick={() => fileInputRef.current?.click()}>
+                      {fotoPreview ? "Cambiar foto" : "Subir foto"}
+                    </Button>
+                    {fotoPreview ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        onClick={() => {
+                          setFotoFile(null);
+                          setPreviewUrl(null);
+                        }}
+                      >
+                        Quitar
+                      </Button>
+                    ) : null}
+                  </>
                 ) : null}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
-                  <Label>Nombre completo</Label>
+                  <Label>Nombre</Label>
                   <Input
-                    placeholder="Ej: Juan Pérez García"
+                    placeholder="Ej: Juan"
                     value={form.nombre}
                     onChange={(e) => update("nombre", e.target.value)}
+                    readOnly={lockPersonalFromLink}
+                    className={cn(lockPersonalFromLink && "bg-muted")}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Apellido</Label>
+                  <Input
+                    placeholder="Ej: Pérez"
+                    value={form.apellido}
+                    onChange={(e) => update("apellido", e.target.value)}
                     readOnly={lockPersonalFromLink}
                     className={cn(lockPersonalFromLink && "bg-muted")}
                   />
@@ -715,33 +809,39 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
             <CardHeader>
               <CardTitle className="text-lg">Datos de Contacto</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>Correo Electrónico</Label>
+                  <Input
+                    type="email"
+                    readOnly
+                    value={form.correoElectronico}
+                    placeholder="Sin cuenta vinculada"
+                    className="bg-muted"
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label>Teléfono</Label>
                   <Input placeholder="Ej: 987654321" value={form.telefono} onChange={(e) => update("telefono", e.target.value)} />
                 </div>
                 <div className="space-y-2">
-                  <Label>Correo electrónico</Label>
-                  <Input
-                    type="email"
-                    placeholder="Ej: juan@enviamas.pe"
-                    value={form.correo}
-                    onChange={(e) => update("correo", e.target.value)}
-                    readOnly={lockPersonalFromLink}
-                    className={cn(lockPersonalFromLink && "bg-muted")}
-                  />
-                </div>
-                <div className="space-y-2 md:col-span-2 lg:col-span-1">
                   <Label>Dirección</Label>
                   <Input placeholder="Ej: Av. Principal 123, Lima" value={form.direccion} onChange={(e) => update("direccion", e.target.value)} />
                 </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Contacto de emergencia — Nombre</Label>
-                  <Input placeholder="Ej: Rosa Pérez" value={form.contactoEmergenciaNombre} onChange={(e) => update("contactoEmergenciaNombre", e.target.value)} />
+                  <Label>Correo Personal</Label>
+                  <Input
+                    type="email"
+                    placeholder="Ej: correo.personal@gmail.com"
+                    value={form.correoPersonal}
+                    onChange={(e) => update("correoPersonal", e.target.value)}
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label>Contacto de emergencia — Teléfono</Label>
+                  <Label>Teléfono de emergencia</Label>
                   <Input placeholder="Ej: 912345678" value={form.contactoEmergenciaTelefono} onChange={(e) => update("contactoEmergenciaTelefono", e.target.value)} />
                 </div>
               </div>
@@ -802,7 +902,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Área</Label>
-                  <Select value={form.departmentId} onValueChange={(v) => update("departmentId", v)} disabled={catalogLoading}>
+                  <Select value={form.departmentId} onValueChange={updateDepartmentId} disabled={catalogLoading}>
                     <SelectTrigger>
                       <SelectValue placeholder={catalogLoading ? "Cargando áreas…" : "Seleccionar área"} />
                     </SelectTrigger>
@@ -818,13 +918,23 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                 </div>
                 <div className="space-y-2">
                   <Label>Puesto</Label>
-                  <Select value={form.puesto} onValueChange={(v) => update("puesto", v)}>
+                  <Select
+                    value={form.puesto}
+                    onValueChange={(v) => update("puesto", v)}
+                    disabled={catalogLoading || form.departmentId === "__no_dept__"}
+                  >
                     <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar puesto" />
+                      <SelectValue
+                        placeholder={
+                          form.departmentId === "__no_dept__"
+                            ? "Selecciona un área primero"
+                            : "Seleccionar puesto"
+                        }
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      {customCatalogOptionItem(form.puesto, puestos)}
-                      {puestos.map((p) => (
+                      {customCatalogOptionItem(form.puesto, positionOptionsForDepartment)}
+                      {positionOptionsForDepartment.map((p) => (
                         <SelectItem key={p} value={p}>
                           {p}
                         </SelectItem>
@@ -847,10 +957,6 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Horario laboral</Label>
-                  <Input placeholder="Ej: 09:00 - 18:00" value={form.horario} onChange={(e) => update("horario", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>Sueldo (S/)</Label>
@@ -890,7 +996,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                       <SelectItem value="__none__">Sin jefe asignado</SelectItem>
                       {managers.map((m) => (
                         <SelectItem key={m.id} value={String(m.id)}>
-                          {m.full_name}
+                          {formatEmployeeName(m)}
                         </SelectItem>
                       ))}
                     </SelectContent>

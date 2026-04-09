@@ -13,7 +13,8 @@ export type DashboardSummaryData = {
   contracts_expiring_count: number;
   contracts_expiring: {
     employee_id: number;
-    full_name: string;
+    first_name: string;
+    last_name: string;
     department_name: string;
     contract_end: string | null;
     contract_type: string | null;

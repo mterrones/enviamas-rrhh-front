@@ -12,12 +12,15 @@ import {
 } from "recharts";
 import { ApiHttpError } from "@/api/client";
 import { fetchMonthlyHireExitFlow, type MonthlyHireExitFlowData } from "@/api/dashboardSummary";
+import { formatAppMonthYear } from "@/lib/formatAppDate";
 
 function formatMonthShort(ym: string): string {
-  const [y, m] = ym.split("-").map(Number);
+  const parts = ym.split("-");
+  if (parts.length < 2) return ym;
+  const y = Number(parts[0]);
+  const m = Number(parts[1]);
   if (!y || !m) return ym;
-  const d = new Date(y, m - 1, 1);
-  return d.toLocaleDateString("es-PE", { month: "short", year: "numeric" });
+  return formatAppMonthYear(m, y);
 }
 
 type MonthlyHireExitFlowCardProps = {

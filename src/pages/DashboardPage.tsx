@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Users, FileWarning, ClipboardList } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,19 +10,19 @@ import { PayrollPeriodAggregatesCard } from "@/components/reports/PayrollPeriodA
 import { useAuth } from "@/contexts/AuthContext";
 import type { AuditLogRow } from "@/api/auditLogs";
 import { ApiHttpError } from "@/api/client";
+import { formatEmployeeName } from "@/lib/employeeName";
+import { formatAppDateTime } from "@/lib/formatAppDate";
 
 const PIE_COLORS = ["#ec6d1f", "#f4ad08", "#3b82f6", "#10b981", "#8b5cf6", "#6366f1", "#94a3b8"];
 
 function formatActivityDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("es-PE", { dateStyle: "short", timeStyle: "medium" });
+  return formatAppDateTime(iso);
 }
 
 export default function DashboardPage() {
   const { hasPermission } = useAuth();
   const canPayrollAggregates = hasPermission("reports.view") && hasPermission("payroll.view");
+  const canOpenAttendanceVacations = hasPermission("attendance.view");
 
   const [summary, setSummary] = useState<DashboardSummaryData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -103,14 +104,11 @@ export default function DashboardPage() {
           ? `Ventana ${summary.contracts_expiring_window_days} días`
           : undefined,
     },
-    {
-      label: "Solicitudes pendientes",
-      value:
-        loading ? "…" : summary != null ? String(summary.pending_vacation_requests_count) : "—",
-      icon: ClipboardList,
-      color: "bg-info/10 text-info",
-    },
   ];
+
+  const pendingVacationCount = summary?.pending_vacation_requests_count ?? 0;
+  const showVacationManageLink =
+    canOpenAttendanceVacations && !loading && summary != null && pendingVacationCount > 0;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -140,6 +138,37 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         ))}
+        <Card
+          className={
+            showVacationManageLink
+              ? "shadow-card hover:shadow-card-hover transition-shadow border-info/30"
+              : "shadow-card hover:shadow-card-hover transition-shadow"
+          }
+        >
+          <CardContent className="p-5">
+            <div className="flex items-start justify-between">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-muted-foreground">Solicitudes pendientes</p>
+                <p className="text-3xl font-bold mt-1">
+                  {loading ? "…" : summary != null ? String(summary.pending_vacation_requests_count) : "—"}
+                </p>
+                {showVacationManageLink ? (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    <Link
+                      to="/asistencia?tab=vacaciones"
+                      className="text-primary font-medium underline-offset-4 hover:underline"
+                    >
+                      Gestionar en Asistencia → Vacaciones
+                    </Link>
+                  </p>
+                ) : null}
+              </div>
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-info/10 text-info shrink-0">
+                <ClipboardList className="w-5 h-5" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -227,7 +256,7 @@ export default function DashboardPage() {
                 {summary?.contracts_expiring.map((c) => (
                   <div key={c.employee_id} className="flex items-center justify-between px-5 py-3">
                     <div>
-                      <p className="text-sm font-medium">{c.full_name}</p>
+                      <p className="text-sm font-medium">{formatEmployeeName(c)}</p>
                       <p className="text-xs text-muted-foreground">{c.department_name}</p>
                     </div>
                     <Badge

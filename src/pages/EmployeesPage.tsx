@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Search, Plus, Filter } from "lucide-react";
+import { Search, Plus, Filter, UserMinus } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { fetchAllEmployees, fetchEmployeesPage, type Employee } from "@/api/empl
 import { fetchEmployeePhotoBlob } from "@/api/employeePhotos";
 import type { Department } from "@/api/departments";
 import { useAuth } from "@/contexts/AuthContext";
+import { formatEmployeeName } from "@/lib/employeeName";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   activo: { label: "Activo", variant: "default" },
@@ -134,7 +135,7 @@ export default function EmployeesPage() {
       try {
         const all = await fetchAllEmployees();
         if (cancelled) return;
-        setEmployeeNameById(new Map(all.map((e) => [e.id, e.full_name])));
+        setEmployeeNameById(new Map(all.map((e) => [e.id, formatEmployeeName(e)])));
       } catch {
         if (!cancelled) setEmployeeNameById(new Map());
       }
@@ -189,13 +190,22 @@ export default function EmployeesPage() {
           <h1 className="text-2xl font-bold">Empleados</h1>
           <p className="text-muted-foreground text-sm mt-1">Gestión del personal de EnviaMas</p>
         </div>
-        {hasPermission("employees.create") ? (
-          <Link to="/empleados/nuevo">
-            <Button className="gap-2" type="button">
-              <Plus className="w-4 h-4" /> Nuevo Empleado
-            </Button>
-          </Link>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {hasPermission("employees.edit") ? (
+            <Link to="/empleados/renuncias">
+              <Button variant="outline" className="gap-2" type="button">
+                <UserMinus className="w-4 h-4" /> Renuncias
+              </Button>
+            </Link>
+          ) : null}
+          {hasPermission("employees.create") ? (
+            <Link to="/empleados/nuevo">
+              <Button className="gap-2" type="button">
+                <Plus className="w-4 h-4" /> Nuevo Empleado
+              </Button>
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       <Card className="shadow-card">
@@ -260,6 +270,7 @@ export default function EmployeesPage() {
               <tbody>
                 {rows.map((emp) => {
                   const st = statusConfig[emp.status] ?? statusConfig.activo;
+                  const displayName = formatEmployeeName(emp);
                   const area =
                     emp.department_id != null ? deptNameById.get(emp.department_id) ?? "—" : "—";
                   const jefe =
@@ -273,9 +284,9 @@ export default function EmployeesPage() {
                             employeeId={emp.id}
                             photoPath={emp.photo_path}
                             linkedUserAvatarPath={emp.linked_user_avatar_path}
-                            fullName={emp.full_name}
+                            fullName={displayName}
                           />
-                          <span className="text-sm font-medium">{emp.full_name}</span>
+                          <span className="text-sm font-medium">{displayName}</span>
                         </div>
                       </td>
                       <td className="px-5 py-3 text-sm text-muted-foreground">{emp.dni}</td>

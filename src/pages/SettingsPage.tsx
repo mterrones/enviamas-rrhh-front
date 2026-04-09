@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ListPaginationBar } from "@/components/ListPaginationBar";
-import { Users, Mail, Shield, FileText, Database, Building2, Pencil, Trash2, Copy } from "lucide-react";
+import { Users, Mail, Shield, FileText, Database, Building2, Pencil, Trash2, Copy, Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { components } from "@/api/contracts";
 import { ApiHttpError } from "@/api/client";
@@ -32,12 +32,10 @@ import { fetchMailSettings, sendMailTest, updateMailSettings } from "@/api/mailS
 import { createUserInvitation, fetchUsersPage, setUserActive, updateUser, type UserAdminUpdate } from "@/api/users";
 import { ROLE_LABELS, type AppRole, useAuth } from "@/contexts/AuthContext";
 import { DEFAULT_LIST_PAGE_SIZE } from "@/constants/pagination";
+import { formatAppDateTime } from "@/lib/formatAppDate";
 
 function formatAuditDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("es-PE", { dateStyle: "short", timeStyle: "medium" });
+  return formatAppDateTime(iso);
 }
 
 function formatAuditMeta(meta: Record<string, unknown> | null, ip: string | null): string {
@@ -61,16 +59,35 @@ function roleLabel(slug: string | null | undefined, displayNameFromApi?: string 
 }
 
 function formatUserCreatedAt(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" });
+  return formatAppDateTime(iso);
 }
 
 function buildInviteAbsoluteUrl(invitePath: string): string {
   const path = invitePath.startsWith("/") ? invitePath : `/${invitePath}`;
   if (globalThis.window === undefined) return path;
   return `${globalThis.window.location.origin}${path}`;
+}
+
+function normalizeDeptPositionsForApi(rows: string[]): string[] {
+  return rows.map(s => s.trim()).filter(s => s.length > 0);
+}
+
+function hasDuplicateDeptPositionsInsensitive(rows: string[]): boolean {
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const t = r.trim();
+    if (!t) continue;
+    const k = t.toLowerCase();
+    if (seen.has(k)) return true;
+    seen.add(k);
+  }
+  return false;
+}
+
+type DeptPositionDraftRow = { key: string; value: string };
+
+function newDeptPositionRow(): DeptPositionDraftRow {
+  return { key: globalThis.crypto.randomUUID(), value: "" };
 }
 
 function formatApiValidationMessage(err: ApiHttpError): string {
@@ -147,6 +164,7 @@ export default function SettingsPage() {
   const [deptFormSaving, setDeptFormSaving] = useState(false);
   const [deptEditing, setDeptEditing] = useState<Department | null>(null);
   const [deptNameDraft, setDeptNameDraft] = useState("");
+  const [deptPositionsDraft, setDeptPositionsDraft] = useState<DeptPositionDraftRow[]>([]);
   const [deptDeleteOpen, setDeptDeleteOpen] = useState(false);
   const [deptDeleteSaving, setDeptDeleteSaving] = useState(false);
   const [deptPendingDelete, setDeptPendingDelete] = useState<Department | null>(null);
@@ -598,12 +616,18 @@ export default function SettingsPage() {
   const openDeptCreate = () => {
     setDeptEditing(null);
     setDeptNameDraft("");
+    setDeptPositionsDraft([]);
     setDeptFormOpen(true);
   };
 
   const openDeptEdit = (d: Department) => {
     setDeptEditing(d);
     setDeptNameDraft(d.name);
+    setDeptPositionsDraft(
+      d.positions?.length
+        ? d.positions.map(p => ({ key: `db-${p.id}`, value: p.name }))
+        : [],
+    );
     setDeptFormOpen(true);
   };
 
@@ -618,18 +642,29 @@ export default function SettingsPage() {
       toast({ title: "Área", description: "Indica un nombre para el área.", variant: "destructive" });
       return;
     }
+    const positionValues = deptPositionsDraft.map(r => r.value);
+    if (hasDuplicateDeptPositionsInsensitive(positionValues)) {
+      toast({
+        title: "Puestos",
+        description: "No puedes repetir el mismo nombre de puesto en el listado.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const positions = normalizeDeptPositionsForApi(positionValues);
     setDeptFormSaving(true);
     try {
       if (deptEditing) {
-        await updateDepartment(deptEditing.id, { name });
+        await updateDepartment(deptEditing.id, { name, positions });
         toast({ title: "Área actualizada", description: "Los cambios se guardaron correctamente." });
       } else {
-        await createDepartment({ name });
+        await createDepartment({ name, positions });
         toast({ title: "Área creada", description: "El departamento se registró correctamente." });
       }
       setDeptFormOpen(false);
       setDeptEditing(null);
       setDeptNameDraft("");
+      setDeptPositionsDraft([]);
       await loadDepartments();
     } catch (e) {
       const msg = e instanceof ApiHttpError ? formatApiValidationMessage(e) : "No se pudo guardar el área";
@@ -865,6 +900,7 @@ export default function SettingsPage() {
                     <tr className="border-b border-border bg-muted/50">
                       <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">ID</th>
                       <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Área</th>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Puestos</th>
                       {canManageDepartments ? (
                         <th className="text-right text-xs font-semibold text-muted-foreground px-5 py-3">Acciones</th>
                       ) : null}
@@ -875,6 +911,9 @@ export default function SettingsPage() {
                       <tr key={d.id} className="border-b border-border last:border-0">
                         <td className="px-5 py-3 text-sm text-muted-foreground tabular-nums">{d.id}</td>
                         <td className="px-5 py-3 text-sm font-medium">{d.name}</td>
+                        <td className="px-5 py-3 text-sm text-muted-foreground tabular-nums">
+                          {d.positions?.length ?? 0}
+                        </td>
                         {canManageDepartments ? (
                           <td className="px-5 py-3 text-right">
                             <div className="inline-flex gap-1.5 justify-end">
@@ -1405,11 +1444,12 @@ export default function SettingsPage() {
           if (!open) {
             setDeptEditing(null);
             setDeptNameDraft("");
+            setDeptPositionsDraft([]);
           }
           setDeptFormOpen(open);
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{deptEditing ? "Editar área" : "Nueva área"}</DialogTitle>
           </DialogHeader>
@@ -1423,6 +1463,52 @@ export default function SettingsPage() {
                 disabled={deptFormSaving}
               />
             </div>
+            <div className="space-y-2">
+              <Label className="text-sm">Puestos del área</Label>
+              <p className="text-xs text-muted-foreground">
+                Opcional. Cargos habituales de esta área; puedes añadir varios (máx. 50). No podrás quitar un puesto si
+                algún empleado del área tiene ese cargo en su ficha (campo Puesto).
+              </p>
+              <div className="space-y-2">
+                {deptPositionsDraft.map(row => (
+                  <div key={row.key} className="flex gap-2 items-center">
+                    <Input
+                      value={row.value}
+                      onChange={e => {
+                        const v = e.target.value;
+                        setDeptPositionsDraft(prev =>
+                          prev.map(x => (x.key === row.key ? { ...x, value: v } : x)),
+                        );
+                      }}
+                      placeholder="Ej: Supervisor"
+                      disabled={deptFormSaving}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="shrink-0"
+                      disabled={deptFormSaving}
+                      onClick={() => setDeptPositionsDraft(prev => prev.filter(x => x.key !== row.key))}
+                      aria-label="Quitar puesto"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="w-full"
+                disabled={deptFormSaving || deptPositionsDraft.length >= 50}
+                onClick={() => setDeptPositionsDraft(prev => [...prev, newDeptPositionRow()])}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Añadir puesto
+              </Button>
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -1433,6 +1519,7 @@ export default function SettingsPage() {
                 setDeptFormOpen(false);
                 setDeptEditing(null);
                 setDeptNameDraft("");
+                setDeptPositionsDraft([]);
               }}
             >
               Cancelar

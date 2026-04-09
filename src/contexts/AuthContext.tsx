@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { components } from "@/api/contracts";
 import { apiRequest } from "@/api/client";
+import { formatEmployeeName } from "@/lib/employeeName";
 import { clearAuthToken, getAuthToken, setAuthToken } from "@/api/authToken";
 
 export type AppRole = "superadmin_rrhh" | "admin_rrhh" | "jefe_area" | "empleado";
@@ -48,7 +49,7 @@ function toAppUser(me: components["schemas"]["UserMe"]): User {
     permissions: Array.isArray(me.permissions) ? me.permissions : undefined,
     area: me.department?.name,
     employee: me.employee
-      ? { id: me.employee.id, fullName: me.employee.full_name }
+      ? { id: me.employee.id, fullName: formatEmployeeName(me.employee) }
       : undefined,
   };
 }
@@ -68,7 +69,7 @@ const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
   admin_rrhh: [
     "dashboard.view",
     "employees.view", "employees.create", "employees.edit",
-    "attendance.view", "attendance.manage",
+    "attendance.view", "attendance.manage", "attendance.approve",
     "payroll.view", "payroll.generate", "payroll.send",
     "portal.view",
     "assets.view", "assets.manage",

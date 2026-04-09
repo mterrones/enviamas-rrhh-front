@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ApiHttpError } from "@/api/client";
 import { fetchPayrollPeriodAggregates, type PayrollPeriodAggregatesData } from "@/api/dashboardSummary";
+import { formatAppMonthYear } from "@/lib/formatAppDate";
 
 function formatMoney(s: string): string {
   const n = Number(s);
@@ -73,9 +74,7 @@ export function PayrollPeriodAggregatesCard({ limit = 6 }: PayrollPeriodAggregat
               <tbody>
                 {data.periods.map((p) => (
                   <tr key={p.payroll_period_id} className="border-b border-border last:border-0">
-                    <td className="px-3 py-2 tabular-nums">
-                      {String(p.month).padStart(2, "0")}/{p.year}
-                    </td>
+                    <td className="px-3 py-2 tabular-nums">{formatAppMonthYear(p.month, p.year)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">S/ {formatMoney(p.gross_total)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">S/ {formatMoney(p.deductions_total)}</td>
                     <td className="px-3 py-2 text-right tabular-nums font-medium">S/ {formatMoney(p.net_total)}</td>

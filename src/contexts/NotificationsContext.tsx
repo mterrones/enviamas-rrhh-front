@@ -7,7 +7,14 @@ import {
   postPortalNotificationsReadAll,
   type PortalEmployeeNotification,
 } from "@/api/portal";
+import {
+  fetchUserNotificationsPage,
+  patchUserNotificationRead,
+  postUserNotificationsReadAll,
+  type UserNotificationRow,
+} from "@/api/userNotifications";
 import { ApiHttpError } from "@/api/client";
+import { formatAppDateTime } from "@/lib/formatAppDate";
 
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const STORAGE_PREFIX = "enviarrhh.headerToastNotifications.v1";
@@ -29,7 +36,7 @@ export interface Notification {
   time: string;
   read: boolean;
   link: string;
-  source?: "portal" | "toast";
+  source: "portal" | "toast" | "approver";
   /** ISO timestamp for retention (portal: from API; toast: stored locally) */
   createdAt?: string | null;
 }
@@ -53,10 +60,7 @@ function mapPortalKindToType(kind: string): "warning" | "info" | "success" {
 }
 
 function formatNotificationTime(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" });
+  return formatAppDateTime(iso);
 }
 
 function mapPortalRow(n: PortalEmployeeNotification): Notification {
@@ -70,6 +74,43 @@ function mapPortalRow(n: PortalEmployeeNotification): Notification {
     read: n.read_at != null,
     link: "/portal",
     source: "portal",
+    createdAt,
+  };
+}
+
+function mapUserNotificationKindToType(kind: string): "warning" | "info" | "success" {
+  const k = kind.toLowerCase();
+  if (k.includes("pending") || k.includes("pendient") || k.includes("nueva")) {
+    return "info";
+  }
+  if (k.includes("vacation") || k.includes("vacac")) {
+    return "info";
+  }
+  return "info";
+}
+
+function linkForApproverUserNotification(kind: string | null | undefined): string {
+  const k = (kind ?? "").toLowerCase();
+  if (k === "resignation.pending" || k.startsWith("resignation.")) {
+    return "/empleados/renuncias";
+  }
+  if (k === "vacation.pending" || k.startsWith("vacation.")) {
+    return "/asistencia?tab=vacaciones";
+  }
+  return "/asistencia?tab=vacaciones";
+}
+
+function mapApproverRow(n: UserNotificationRow): Notification {
+  const createdAt = n.created_at ?? null;
+  return {
+    id: n.id,
+    type: mapUserNotificationKindToType(n.kind ?? ""),
+    title: n.title,
+    description: (n.body ?? "").trim() || "—",
+    time: formatNotificationTime(createdAt),
+    read: n.read_at != null,
+    link: linkForApproverUserNotification(n.kind),
+    source: "approver",
     createdAt,
   };
 }
@@ -137,8 +178,8 @@ function saveToastToStorage(userId: string, items: Notification[]) {
 interface NotificationsContextType {
   notifications: Notification[];
   addNotification: (title: string, description?: string, type?: string, link?: string) => void;
-  markNotificationRead: (id: number) => Promise<void>;
-  dismissNotification: (id: number) => Promise<void>;
+  markNotificationRead: (target: Pick<Notification, "id" | "source">) => Promise<void>;
+  dismissNotification: (target: Pick<Notification, "id" | "source">) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   clearAllNotifications: () => void;
   unreadCount: number;
@@ -149,9 +190,11 @@ const NotificationsContext = createContext<NotificationsContextType | null>(null
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const { hasPermission, user } = useAuth();
   const canPortal = hasPermission("portal.view");
+  const canApproverInbox = hasPermission("attendance.approve");
 
   const [toastNotifications, setToastNotifications] = useState<Notification[]>([]);
   const [portalNotifications, setPortalNotifications] = useState<Notification[]>([]);
+  const [approverNotifications, setApproverNotifications] = useState<Notification[]>([]);
 
   const userId = user?.id != null ? String(user.id) : null;
 
@@ -169,8 +212,16 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   }, [userId, toastNotifications]);
 
   const notifications = useMemo(() => {
-    return [...toastNotifications, ...portalNotifications].filter((n) => isWithinRetention(n.createdAt));
-  }, [toastNotifications, portalNotifications]);
+    const merged = [...toastNotifications, ...portalNotifications, ...approverNotifications].filter((n) =>
+      isWithinRetention(n.createdAt),
+    );
+    merged.sort((a, b) => {
+      const ta = new Date(a.createdAt ?? 0).getTime();
+      const tb = new Date(b.createdAt ?? 0).getTime();
+      return tb - ta;
+    });
+    return merged;
+  }, [toastNotifications, portalNotifications, approverNotifications]);
 
   const notificationsRef = useRef<Notification[]>([]);
   notificationsRef.current = notifications;
@@ -206,6 +257,31 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     };
   }, [canPortal, user?.id]);
 
+  useEffect(() => {
+    if (!canApproverInbox) {
+      setApproverNotifications([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const r = await fetchUserNotificationsPage({ page: 1, per_page: 20 });
+        if (cancelled) return;
+        const rows = r.data.map(mapApproverRow).filter((n) => isWithinRetention(n.createdAt));
+        setApproverNotifications(rows);
+      } catch {
+        if (cancelled) return;
+        setApproverNotifications([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canApproverInbox, user?.id]);
+
   const addNotification = useCallback((title: string, description?: string, type: string = "info", link?: string) => {
     const createdAt = new Date().toISOString();
     const newNotif: Notification = {
@@ -222,9 +298,11 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     setToastNotifications((prev) => [newNotif, ...prev]);
   }, []);
 
-  const markNotificationRead = useCallback(async (id: number) => {
-    const n = notificationsRef.current.find((x) => x.id === id);
+  const markNotificationRead = useCallback(async (target: Pick<Notification, "id" | "source">) => {
+    const n = notificationsRef.current.find((x) => x.id === target.id && x.source === target.source);
     if (!n || n.read) return;
+
+    const id = target.id;
 
     if (n.source === "portal") {
       try {
@@ -234,13 +312,22 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       } catch {
         setPortalNotifications((prev) => prev.map((x) => (x.id === id ? { ...x, read: true } : x)));
       }
+    } else if (n.source === "approver") {
+      try {
+        const r = await patchUserNotificationRead(id);
+        const mapped = mapApproverRow(r.data);
+        setApproverNotifications((prev) => prev.map((x) => (x.id === id ? mapped : x)));
+      } catch {
+        setApproverNotifications((prev) => prev.map((x) => (x.id === id ? { ...x, read: true } : x)));
+      }
     } else {
       setToastNotifications((prev) => prev.map((x) => (x.id === id ? { ...x, read: true } : x)));
     }
   }, []);
 
-  const dismissNotification = useCallback(async (id: number) => {
-    const n = notificationsRef.current.find((x) => x.id === id);
+  const dismissNotification = useCallback(async (target: Pick<Notification, "id" | "source">) => {
+    const n = notificationsRef.current.find((x) => x.id === target.id && x.source === target.source);
+    const id = target.id;
     if (n?.source === "portal" && !n.read) {
       try {
         await patchPortalNotificationRead(id);
@@ -248,8 +335,17 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         /* ignore */
       }
     }
+    if (n?.source === "approver" && !n.read) {
+      try {
+        await patchUserNotificationRead(id);
+      } catch {
+        /* ignore */
+      }
+    }
     if (n?.source === "toast") {
       setToastNotifications((prev) => prev.filter((x) => x.id !== id));
+    } else if (n?.source === "approver") {
+      setApproverNotifications((prev) => prev.filter((x) => x.id !== id));
     } else {
       setPortalNotifications((prev) => prev.filter((x) => x.id !== id));
     }
@@ -266,12 +362,21 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
       setPortalNotifications((prev) => prev.map((x) => ({ ...x, read: true })));
     }
+    if (canApproverInbox) {
+      try {
+        await postUserNotificationsReadAll();
+      } catch {
+        /* ignore */
+      }
+      setApproverNotifications((prev) => prev.map((x) => ({ ...x, read: true })));
+    }
     setToastNotifications((prev) => prev.map((x) => ({ ...x, read: true })));
-  }, [canPortal]);
+  }, [canPortal, canApproverInbox]);
 
   const clearAllNotifications = useCallback(() => {
     setToastNotifications([]);
     setPortalNotifications([]);
+    setApproverNotifications([]);
   }, []);
 
   useEffect(() => {

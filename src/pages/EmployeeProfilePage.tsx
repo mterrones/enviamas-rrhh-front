@@ -26,6 +26,10 @@ import {
 } from "@/api/employeeDocuments";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { formatEmployeeName } from "@/lib/employeeName";
+import { formatAppDate, formatAppDateTime, formatAppMonthYear } from "@/lib/formatAppDate";
+import { cn } from "@/lib/utils";
+import { isWeekendYmd } from "@/lib/weekendAttendance";
 import { fetchAllAttendanceInRange, type AttendanceRecord } from "@/api/attendance";
 import {
   fetchPayrollPeriods,
@@ -34,21 +38,6 @@ import {
   type PayrollPeriod,
 } from "@/api/payroll";
 import { fetchAllAssetsForEmployee, type Asset } from "@/api/assets";
-
-const MESES = [
-  "Enero",
-  "Febrero",
-  "Marzo",
-  "Abril",
-  "Mayo",
-  "Junio",
-  "Julio",
-  "Agosto",
-  "Septiembre",
-  "Octubre",
-  "Noviembre",
-  "Diciembre",
-];
 
 function monthBounds(d: Date): { from: string; to: string; year: number; monthIndex: number } {
   const year = d.getFullYear();
@@ -90,7 +79,7 @@ function formatAssetDescription(a: Asset): string {
 function payslipPeriodLabel(p: Payslip, periodMap: Map<number, PayrollPeriod>): string {
   const per = periodMap.get(p.payroll_period_id);
   if (!per) return `Periodo #${p.payroll_period_id}`;
-  return `${MESES[per.month - 1] ?? String(per.month)} ${per.year}`;
+  return formatAppMonthYear(per.month, per.year);
 }
 
 const statusBadgeVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -106,15 +95,6 @@ const statusLabel: Record<string, string> = {
   cesado: "Cesado",
   vacaciones: "Vacaciones",
 };
-
-function formatDisplayDate(iso?: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(`${iso}T12:00:00`).toLocaleDateString("es-PE");
-  } catch {
-    return iso;
-  }
-}
 
 function initialsFromName(name: string): string {
   return name
@@ -138,15 +118,6 @@ const documentTypeLabels: Record<EmployeeDocumentType, string> = {
   medical_exam: "Examen médico",
   contract: "Contrato",
 };
-
-function formatDisplayDateTime(iso?: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" });
-  } catch {
-    return iso;
-  }
-}
 
 function storageBasename(path: string): string {
   const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
@@ -408,7 +379,7 @@ export default function EmployeeProfilePage() {
         if (e.manager_id != null) {
           try {
             const mgr = await fetchEmployee(e.manager_id);
-            if (!cancelled) setManagerName(mgr.data.full_name);
+            if (!cancelled) setManagerName(formatEmployeeName(mgr.data));
           } catch {
             if (!cancelled) setManagerName("—");
           }
@@ -600,7 +571,7 @@ export default function EmployeeProfilePage() {
     : null;
 
   const attendanceYm = attendanceMonthMeta;
-  const attendanceLeadingBlanks = (new Date(attendanceYm.year, attendanceYm.monthIndex, 1).getDay() + 6) % 7;
+  const attendanceLeadingBlanks = new Date(attendanceYm.year, attendanceYm.monthIndex, 1).getDay();
   const attendanceDaysInMonth = new Date(attendanceYm.year, attendanceYm.monthIndex + 1, 0).getDate();
 
   return (
@@ -614,17 +585,17 @@ export default function EmployeeProfilePage() {
           <div className="flex flex-col sm:flex-row items-start gap-5">
             <Avatar className="w-20 h-20">
               {photoObjectUrl ? (
-                <AvatarImage src={photoObjectUrl} alt={e.full_name} className="object-cover" />
+                <AvatarImage src={photoObjectUrl} alt={formatEmployeeName(e)} className="object-cover" />
               ) : e.linked_user_avatar_path?.trim() ? (
-                <AvatarImage src={e.linked_user_avatar_path.trim()} alt={e.full_name} className="object-cover" />
+                <AvatarImage src={e.linked_user_avatar_path.trim()} alt={formatEmployeeName(e)} className="object-cover" />
               ) : null}
               <AvatarFallback className="bg-primary text-primary-foreground text-2xl font-bold">
-                {initialsFromName(e.full_name)}
+                {initialsFromName(formatEmployeeName(e))}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-wrap">
-                <h1 className="text-2xl font-bold">{e.full_name}</h1>
+                <h1 className="text-2xl font-bold">{formatEmployeeName(e)}</h1>
                 <Badge variant={st} className="w-fit">
                   {stLabel}
                 </Badge>
@@ -640,9 +611,15 @@ export default function EmployeeProfilePage() {
                 {e.position ?? "—"} — {deptName}
               </p>
               <div className="flex flex-wrap gap-4 mt-3 text-sm text-muted-foreground">
+                {e.corporate_email ? (
+                  <span className="flex items-center gap-1.5" title="Correo electrónico">
+                    <Mail className="w-4 h-4 shrink-0" />
+                    {e.corporate_email}
+                  </span>
+                ) : null}
                 {e.personal_email ? (
-                  <span className="flex items-center gap-1.5">
-                    <Mail className="w-4 h-4" />
+                  <span className="flex items-center gap-1.5" title="Correo personal">
+                    <Mail className="w-4 h-4 shrink-0" />
                     {e.personal_email}
                   </span>
                 ) : null}
@@ -683,7 +660,7 @@ export default function EmployeeProfilePage() {
               <CardContent className="space-y-3">
                 {[
                   ["DNI", e.dni],
-                  ["Fecha de Nacimiento", formatDisplayDate(e.birth_date)],
+                  ["Fecha de Nacimiento", formatAppDate(e.birth_date)],
                   ["Nivel de Estudios", e.education_level ?? "—"],
                   ["Carrera", e.degree ?? "—"],
                 ].map(([l, v]) => (
@@ -797,7 +774,7 @@ export default function EmployeeProfilePage() {
                             <div className="min-w-0 space-y-0.5">
                               <span className="font-medium block">{documentTypeLabels[d.type]}</span>
                               <span className="text-muted-foreground block truncate">
-                                {formatDisplayDateTime(d.uploaded_at ?? d.created_at)} — {storageBasename(d.file_path)}
+                                {formatAppDateTime(d.uploaded_at ?? d.created_at)} — {storageBasename(d.file_path)}
                               </span>
                             </div>
                             <div className="flex flex-wrap gap-1 shrink-0">
@@ -855,20 +832,11 @@ export default function EmployeeProfilePage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {[
+                  ["Correo Electrónico", e.corporate_email ?? "—"],
                   ["Teléfono", e.phone ?? "—"],
-                  ["Correo", e.personal_email ?? "—"],
                   ["Dirección", e.address ?? "—"],
-                ].map(([l, v]) => (
-                  <div key={l} className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">{l}</span>
-                    <span className="font-medium">{v}</span>
-                  </div>
-                ))}
-                <Separator />
-                <p className="text-sm font-medium">Contacto de Emergencia</p>
-                {[
-                  ["Nombre", e.emergency_contact_name ?? "—"],
-                  ["Teléfono", e.emergency_contact_phone ?? "—"],
+                  ["Correo Personal", e.personal_email ?? "—"],
+                  ["Teléfono de emergencia", e.emergency_contact_phone ?? "—"],
                 ].map(([l, v]) => (
                   <div key={l} className="flex justify-between text-sm">
                     <span className="text-muted-foreground">{l}</span>
@@ -914,8 +882,8 @@ export default function EmployeeProfilePage() {
                   ["Horario", e.schedule ?? "—"],
                   ["Sueldo Actual", formatSalary(e.salary)],
                   ["Tipo de Contrato", e.contract_type ?? "—"],
-                  ["Inicio Contrato", formatDisplayDate(e.contract_start)],
-                  ["Fin Contrato", formatDisplayDate(e.contract_end)],
+                  ["Inicio Contrato", formatAppDate(e.contract_start)],
+                  ["Fin Contrato", formatAppDate(e.contract_end)],
                   ["Jefe Directo", managerName],
                 ].map(([l, v]) => (
                   <div key={l} className="flex justify-between text-sm py-1">
@@ -940,7 +908,7 @@ export default function EmployeeProfilePage() {
           <Card className="shadow-card">
             <CardHeader>
               <CardTitle className="text-base">
-                Asistencia — {MESES[attendanceYm.monthIndex]} {attendanceYm.year}
+                Asistencia — {formatAppMonthYear(attendanceYm.monthIndex + 1, attendanceYm.year)}
               </CardTitle>
               <p className="text-xs text-muted-foreground font-normal">
                 Registros del mes calendario actual. Sin color = día sin registro.
@@ -956,8 +924,14 @@ export default function EmployeeProfilePage() {
               ) : (
                 <>
               <div className="grid grid-cols-7 gap-1.5 mb-4">
-                    {["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map((d) => (
-                      <div key={d} className="text-xs font-semibold text-muted-foreground text-center py-1">
+                    {["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"].map((d, i) => (
+                      <div
+                        key={d}
+                        className={cn(
+                          "text-xs font-semibold text-center py-1",
+                          i === 0 || i === 6 ? "text-zinc-500 dark:text-zinc-400" : "text-muted-foreground",
+                        )}
+                      >
                         {d}
                       </div>
                     ))}
@@ -969,12 +943,22 @@ export default function EmployeeProfilePage() {
                       const dateKey = `${attendanceYm.year}-${pad(attendanceYm.monthIndex + 1)}-${pad(day)}`;
                       const rec = attendanceByDate.get(dateKey);
                       const status = rec?.status;
-                      const cls = attendanceCellClass(status);
+                      const isWeekendCell = isWeekendYmd(attendanceYm.year, attendanceYm.monthIndex, day);
+                      const cls = isWeekendCell
+                        ? "bg-zinc-600 text-zinc-100 dark:bg-zinc-800 dark:text-zinc-200"
+                        : attendanceCellClass(status);
                       return (
                         <div
                           key={dateKey}
-                          className={`aspect-square rounded-md flex items-center justify-center text-xs font-medium transition-colors ${cls}`}
-                          title={status ?? "Sin registro"}
+                          className={cn(
+                            "aspect-square rounded-md flex items-center justify-center text-xs font-medium transition-colors min-w-0 w-full",
+                            cls,
+                          )}
+                          title={
+                            isWeekendCell
+                              ? "Día no laborable (fin de semana)"
+                              : status ?? "Sin registro"
+                          }
                         >
                           {day}
                         </div>
@@ -1112,7 +1096,7 @@ export default function EmployeeProfilePage() {
                         <td className="px-5 py-3 text-sm font-medium">{a.type}</td>
                         <td className="px-5 py-3 text-sm">{formatAssetDescription(a)}</td>
                         <td className="px-5 py-3 text-sm text-muted-foreground">
-                          {a.assigned_at ? formatDisplayDate(a.assigned_at) : formatDisplayDateTime(a.created_at)}
+                          {a.assigned_at ? formatAppDate(a.assigned_at) : formatAppDateTime(a.created_at)}
                         </td>
                         <td className="px-5 py-3">
                           <Badge variant="secondary" className="text-xs">
@@ -1152,7 +1136,7 @@ export default function EmployeeProfilePage() {
                   <div className="grid gap-2 text-sm">
                     <div className="flex justify-between gap-4">
                       <span className="text-muted-foreground">Fecha efectiva de cese</span>
-                      <span className="font-medium">{formatDisplayDate(terminationRecord.effective_date)}</span>
+                      <span className="font-medium">{formatAppDate(terminationRecord.effective_date)}</span>
                     </div>
                     <div className="flex flex-col gap-1 sm:flex-row sm:justify-between sm:gap-4">
                       <span className="text-muted-foreground shrink-0">Motivo</span>
@@ -1161,7 +1145,7 @@ export default function EmployeeProfilePage() {
                     {terminationRecord.confirmed_at ? (
                       <div className="flex justify-between gap-4">
                         <span className="text-muted-foreground">Confirmado el</span>
-                        <span className="font-medium">{formatDisplayDateTime(terminationRecord.confirmed_at)}</span>
+                        <span className="font-medium">{formatAppDateTime(terminationRecord.confirmed_at)}</span>
                       </div>
                     ) : null}
                     {terminationRecord.notes?.trim() ? (

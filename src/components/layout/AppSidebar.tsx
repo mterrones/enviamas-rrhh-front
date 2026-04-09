@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Users, CalendarCheck, FileText, UserCircle,
-  Monitor, BarChart3, Settings, ChevronLeft, ChevronRight, ShieldCheck
+  Monitor, BarChart3, Settings, ChevronLeft, ChevronRight, ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";

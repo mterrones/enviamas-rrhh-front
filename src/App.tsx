@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -17,6 +17,7 @@ import EditEmployeePage from "./pages/EditEmployeePage";
 import AttendancePage from "./pages/AttendancePage";
 import PayrollPage from "./pages/PayrollPage";
 import EmployeePortalPage from "./pages/EmployeePortalPage";
+import ResignationRequestsPage from "./pages/ResignationRequestsPage";
 import AssetsPage from "./pages/AssetsPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -58,6 +59,15 @@ const App = () => (
                   </RequirePermission>
                 }
               />
+              <Route
+                path="/empleados/renuncias"
+                element={
+                  <RequirePermission permission="employees.edit">
+                    <ResignationRequestsPage />
+                  </RequirePermission>
+                }
+              />
+              <Route path="/renuncias" element={<Navigate to="/empleados/renuncias" replace />} />
               <Route
                 path="/empleados/:id/edit"
                 element={

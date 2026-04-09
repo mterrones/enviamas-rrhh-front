@@ -1,10 +1,20 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type MouseEvent, type SetStateAction } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FileText, Download, Send, Plus, Pencil } from "lucide-react";
+import { FileText, Download, Send, Plus, Pencil, Trash2, CheckCircle2, ClipboardList } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -15,8 +25,9 @@ import { fetchAllEmployees, type Employee } from "@/api/employees";
 import {
   createPayrollPeriod,
   createPayslip,
+  deletePayslip,
+  approvePayslip,
   updatePayslip,
-  notifyPayslipEmployee,
   notifyPayslipsForPeriod,
   downloadPayslipPdf,
   downloadPayrollSummaryPdf,
@@ -25,12 +36,26 @@ import {
   fetchPayrollPeriods,
   fetchAllPayslipsForPeriod,
   fetchPrevisionalPreview,
+  previewAttendanceDeductions,
+  applyPrevisionalToPayslip,
+  fetchDeductionInstallmentPlans,
+  createDeductionInstallmentPlan,
   type Payslip,
   type PayrollPeriod,
   type PrevisionalPreviewData,
+  type DeductionInstallmentPlan,
 } from "@/api/payroll";
+import {
+  type DeductionLineDraft,
+  newDeductionLine,
+  sumDeductionLineAmounts,
+  deductionLinesFromPayslipMeta,
+  buildPayslipBreakdownMeta,
+} from "@/lib/payrollDeductionHelpers";
 import { ListPaginationBar } from "@/components/ListPaginationBar";
 import { DEFAULT_LIST_PAGE_SIZE } from "@/constants/pagination";
+import { formatEmployeeName } from "@/lib/employeeName";
+import { formatAppDate, formatAppMonthYear } from "@/lib/formatAppDate";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -40,7 +65,7 @@ const meses = [
 ];
 
 function periodLabel(p: PayrollPeriod): string {
-  return `${meses[p.month - 1] ?? p.month} ${p.year}`;
+  return formatAppMonthYear(p.month, p.year);
 }
 
 function formatPen(amount: string | number): string {
@@ -131,6 +156,8 @@ export default function PayrollPage() {
   const [payslipNetTouched, setPayslipNetTouched] = useState(false);
   const [payslipApplyPrevisional, setPayslipApplyPrevisional] = useState(false);
   const [payslipSaving, setPayslipSaving] = useState(false);
+  const [payslipToDelete, setPayslipToDelete] = useState<Payslip | null>(null);
+  const [payslipDeleteSaving, setPayslipDeleteSaving] = useState(false);
 
   const [payslipEditDialogOpen, setPayslipEditDialogOpen] = useState(false);
   const [editPayslipTarget, setEditPayslipTarget] = useState<Payslip | null>(null);
@@ -140,10 +167,21 @@ export default function PayrollPage() {
   const [editPayslipNetTouched, setEditPayslipNetTouched] = useState(false);
   const [editPayslipSaving, setEditPayslipSaving] = useState(false);
   const [payrollExportBusy, setPayrollExportBusy] = useState<null | "xlsx" | "pdf">(null);
-  const [payslipNotifyBusy, setPayslipNotifyBusy] = useState(false);
+  const [payslipApproveBusy, setPayslipApproveBusy] = useState(false);
   const [payslipPdfBusy, setPayslipPdfBusy] = useState(false);
   const [payrollBulkNotifyBusy, setPayrollBulkNotifyBusy] = useState(false);
   const [payrollBulkZipBusy, setPayrollBulkZipBusy] = useState(false);
+
+  const [createDeductionLines, setCreateDeductionLines] = useState<DeductionLineDraft[]>([]);
+  const [editDeductionLines, setEditDeductionLines] = useState<DeductionLineDraft[]>([]);
+  const [createInstallmentPlans, setCreateInstallmentPlans] = useState<DeductionInstallmentPlan[]>([]);
+  const [editInstallmentPlans, setEditInstallmentPlans] = useState<DeductionInstallmentPlan[]>([]);
+  const [attendancePreviewBusy, setAttendancePreviewBusy] = useState(false);
+  const [editApplyPrevisionalBusy, setEditApplyPrevisionalBusy] = useState(false);
+  const [newPlanLabel, setNewPlanLabel] = useState("");
+  const [newPlanTotal, setNewPlanTotal] = useState("");
+  const [newPlanMonths, setNewPlanMonths] = useState("");
+  const [newPlanSaving, setNewPlanSaving] = useState(false);
 
   const employeeById = useMemo(() => {
     const m: Record<number, Employee> = {};
@@ -291,6 +329,11 @@ export default function PayrollPage() {
     setPayslipNet("");
     setPayslipNetTouched(false);
     setPayslipApplyPrevisional(false);
+    setCreateDeductionLines([]);
+    setCreateInstallmentPlans([]);
+    setNewPlanLabel("");
+    setNewPlanTotal("");
+    setNewPlanMonths("");
     setPayslipDialogOpen(true);
   };
 
@@ -300,15 +343,36 @@ export default function PayrollPage() {
     setPayslipNet((g - d).toFixed(2));
   };
 
-  const handlePayslipGrossChange = (value: string) => {
-    setPayslipGross(value);
-    if (!payslipNetTouched) applyNetFromGrossDeductions(value, payslipDeductions);
+  const handlePayslipEmployeeChange = (value: string) => {
+    setPayslipEmployeeId(value);
+    setCreateDeductionLines([]);
+    const id = Number.parseInt(value, 10);
+    let grossStr = "";
+    if (!Number.isNaN(id)) {
+      const emp = employeeById[id];
+      const raw = emp?.salary;
+      if (raw != null && String(raw).trim() !== "") {
+        const n = Number.parseFloat(String(raw).replace(",", "."));
+        grossStr = Number.isNaN(n) ? "0.00" : n.toFixed(2);
+      } else {
+        grossStr = "0.00";
+      }
+      void fetchDeductionInstallmentPlans(id, { status: "active" })
+        .then((r) => setCreateInstallmentPlans(r.data))
+        .catch(() => setCreateInstallmentPlans([]));
+    } else {
+      setCreateInstallmentPlans([]);
+    }
+    setPayslipGross(grossStr);
   };
 
-  const handlePayslipDeductionsChange = (value: string) => {
-    setPayslipDeductions(value);
-    if (!payslipNetTouched) applyNetFromGrossDeductions(payslipGross, value);
-  };
+  useEffect(() => {
+    const sum = sumDeductionLineAmounts(createDeductionLines);
+    setPayslipDeductions(sum.toFixed(2));
+    if (!payslipNetTouched) {
+      applyNetFromGrossDeductions(payslipGross, sum.toFixed(2));
+    }
+  }, [createDeductionLines, payslipGross, payslipNetTouched]);
 
   const handlePayslipNetChange = (value: string) => {
     setPayslipNetTouched(true);
@@ -334,6 +398,7 @@ export default function PayrollPage() {
     }
     setPayslipSaving(true);
     try {
+      const meta = buildPayslipBreakdownMeta(createDeductionLines);
       const res = await createPayslip({
         payroll_period_id: Number(selectedPeriodId),
         employee_id: empId,
@@ -342,6 +407,7 @@ export default function PayrollPage() {
         net_amount: net,
         status: "pendiente",
         apply_previsional_assist: payslipApplyPrevisional,
+        ...(meta ? { meta } : {}),
       });
       toast({ title: "Boleta creada", description: "El registro se guardó correctamente." });
       setPayslipDialogOpen(false);
@@ -371,18 +437,42 @@ export default function PayrollPage() {
     setEditPayslipDeductions(String(p.deductions_amount));
     setEditPayslipNet(String(p.net_amount));
     setEditPayslipNetTouched(false);
+    const fromMeta = deductionLinesFromPayslipMeta(p.meta);
+    const dedNum = Number.parseFloat(String(p.deductions_amount).replace(",", ".")) || 0;
+    if (fromMeta.length === 0 && dedNum > 0) {
+      setEditDeductionLines([
+        newDeductionLine({
+          code: "legacy_total",
+          label: "Descuentos (sin desglose previo)",
+          amount: dedNum.toFixed(2),
+        }),
+      ]);
+    } else {
+      setEditDeductionLines(fromMeta);
+    }
+    void fetchDeductionInstallmentPlans(p.employee_id, { status: "active" })
+      .then((r) => setEditInstallmentPlans(r.data))
+      .catch(() => setEditInstallmentPlans([]));
     setPayslipEditDialogOpen(true);
   };
 
   const handleEditPayslipGrossChange = (value: string) => {
     setEditPayslipGross(value);
-    if (!editPayslipNetTouched) applyEditNetFromGrossDeductions(value, editPayslipDeductions);
+    if (!editPayslipNetTouched) {
+      const sum = sumDeductionLineAmounts(editDeductionLines);
+      applyEditNetFromGrossDeductions(value, sum.toFixed(2));
+    }
   };
 
-  const handleEditPayslipDeductionsChange = (value: string) => {
-    setEditPayslipDeductions(value);
-    if (!editPayslipNetTouched) applyEditNetFromGrossDeductions(editPayslipGross, value);
-  };
+  useEffect(() => {
+    if (!payslipEditDialogOpen || !editPayslipTarget) return;
+    const sum = sumDeductionLineAmounts(editDeductionLines);
+    setEditPayslipDeductions(sum.toFixed(2));
+    if (!editPayslipNetTouched) {
+      const g = Number.parseFloat(editPayslipGross.replace(",", ".")) || 0;
+      setEditPayslipNet((g - sum).toFixed(2));
+    }
+  }, [editDeductionLines, editPayslipGross, editPayslipNetTouched, payslipEditDialogOpen, editPayslipTarget]);
 
   const handleEditPayslipNetChange = (value: string) => {
     setEditPayslipNetTouched(true);
@@ -401,10 +491,21 @@ export default function PayrollPage() {
     const payslipId = editPayslipTarget.id;
     setEditPayslipSaving(true);
     try {
+      const prevMeta =
+        editPayslipTarget.meta && typeof editPayslipTarget.meta === "object"
+          ? { ...(editPayslipTarget.meta as Record<string, unknown>) }
+          : {};
+      const breakdown = buildPayslipBreakdownMeta(editDeductionLines);
+      if (breakdown) {
+        Object.assign(prevMeta, breakdown);
+      } else {
+        delete prevMeta.payslip_breakdown;
+      }
       await updatePayslip(payslipId, {
         gross_amount: gross,
         deductions_amount: ded,
         net_amount: net,
+        meta: prevMeta as Record<string, unknown>,
       });
       toast({ title: "Boleta actualizada", description: "Los importes se guardaron correctamente." });
       setPayslipEditDialogOpen(false);
@@ -419,6 +520,197 @@ export default function PayrollPage() {
       });
     } finally {
       setEditPayslipSaving(false);
+    }
+  };
+
+  const appendInstallmentLine = (plan: DeductionInstallmentPlan, setLines: Dispatch<SetStateAction<DeductionLineDraft[]>>) => {
+    const nextAmt = plan.next_installment_amount ?? plan.installment_amount;
+    const nextNum = plan.next_installment_number ?? plan.installments_applied + 1;
+    setLines((prev) => [
+      ...prev,
+      newDeductionLine({
+        code: `installment:${plan.id}`,
+        label: `${plan.label} (cuota ${nextNum}/${plan.installment_count})`,
+        amount: String(nextAmt),
+      }),
+    ]);
+  };
+
+  const handleCreateInstallmentPlan = async () => {
+    const empId = Number.parseInt(payslipEmployeeId, 10);
+    if (Number.isNaN(empId)) {
+      toast({ title: "Empleado requerido", description: "Selecciona un empleado primero.", variant: "destructive" });
+      return;
+    }
+    const total = Number.parseFloat(newPlanTotal.replace(",", ".")) || 0;
+    const months = Number.parseInt(newPlanMonths, 10);
+    if (total < 0.01 || months < 1) {
+      toast({ title: "Datos inválidos", description: "Indica monto total y cantidad de meses.", variant: "destructive" });
+      return;
+    }
+    setNewPlanSaving(true);
+    try {
+      const res = await createDeductionInstallmentPlan(empId, {
+        label: newPlanLabel.trim() || "Préstamo / descuento",
+        total_amount: total,
+        installment_count: months,
+      });
+      setCreateInstallmentPlans((prev) => [res.data, ...prev]);
+      setNewPlanLabel("");
+      setNewPlanTotal("");
+      setNewPlanMonths("");
+      toast({ title: "Plan creado", description: "Puedes aplicar la cuota en esta boleta." });
+    } catch (err) {
+      toast({
+        title: "No se pudo crear el plan",
+        description: payrollMutationErrorMessage(err),
+        variant: "destructive",
+      });
+    } finally {
+      setNewPlanSaving(false);
+    }
+  };
+
+  const handleAttendanceSuggestionCreate = async () => {
+    if (!selectedPeriodId || !payslipEmployeeId) {
+      toast({ title: "Datos incompletos", description: "Selecciona empleado y periodo.", variant: "destructive" });
+      return;
+    }
+    setAttendancePreviewBusy(true);
+    try {
+      const gross = Number.parseFloat(payslipGross.replace(",", ".")) || 0;
+      const res = await previewAttendanceDeductions({
+        employee_id: Number.parseInt(payslipEmployeeId, 10),
+        payroll_period_id: Number(selectedPeriodId),
+        gross_amount: gross,
+      });
+      setCreateDeductionLines((prev) => {
+        const rest = prev.filter((l) => l.code !== "absence_suggested" && l.code !== "lateness_suggested");
+        const add: DeductionLineDraft[] = [...rest];
+        if (res.data.suggested_deduction_absence > 0) {
+          add.push(
+            newDeductionLine({
+              code: "absence_suggested",
+              label: "Inasistencias (sugerido)",
+              amount: res.data.suggested_deduction_absence.toFixed(2),
+            }),
+          );
+        }
+        if (res.data.suggested_deduction_lateness > 0) {
+          add.push(
+            newDeductionLine({
+              code: "lateness_suggested",
+              label: "Tardanzas (sugerido)",
+              amount: res.data.suggested_deduction_lateness.toFixed(2),
+            }),
+          );
+        }
+        return add;
+      });
+      toast({
+        title: "Sugerencia de asistencia",
+        description: `${res.data.absence_days_unjustified} falta(s) NJ · ${res.data.tardiness_events} tardanza(s). Revisa montos antes de guardar.`,
+      });
+    } catch (err) {
+      toast({
+        title: "No se pudo calcular",
+        description: payrollMutationErrorMessage(err),
+        variant: "destructive",
+      });
+    } finally {
+      setAttendancePreviewBusy(false);
+    }
+  };
+
+  const handleAttendanceSuggestionEdit = async () => {
+    if (!editPayslipTarget || !selectedPeriodId) return;
+    setAttendancePreviewBusy(true);
+    try {
+      const gross = Number.parseFloat(editPayslipGross.replace(",", ".")) || 0;
+      const res = await previewAttendanceDeductions({
+        employee_id: editPayslipTarget.employee_id,
+        payroll_period_id: Number(selectedPeriodId),
+        gross_amount: gross,
+      });
+      setEditDeductionLines((prev) => {
+        const rest = prev.filter((l) => l.code !== "absence_suggested" && l.code !== "lateness_suggested");
+        const add: DeductionLineDraft[] = [...rest];
+        if (res.data.suggested_deduction_absence > 0) {
+          add.push(
+            newDeductionLine({
+              code: "absence_suggested",
+              label: "Inasistencias (sugerido)",
+              amount: res.data.suggested_deduction_absence.toFixed(2),
+            }),
+          );
+        }
+        if (res.data.suggested_deduction_lateness > 0) {
+          add.push(
+            newDeductionLine({
+              code: "lateness_suggested",
+              label: "Tardanzas (sugerido)",
+              amount: res.data.suggested_deduction_lateness.toFixed(2),
+            }),
+          );
+        }
+        return add;
+      });
+      toast({
+        title: "Sugerencia de asistencia",
+        description: `Faltas NJ: ${res.data.absence_days_unjustified} · Tardanzas: ${res.data.tardiness_events}.`,
+      });
+    } catch (err) {
+      toast({
+        title: "No se pudo calcular",
+        description: payrollMutationErrorMessage(err),
+        variant: "destructive",
+      });
+    } finally {
+      setAttendancePreviewBusy(false);
+    }
+  };
+
+  const handleApplyPrevisionalEdit = async () => {
+    if (!editPayslipTarget) return;
+    setEditApplyPrevisionalBusy(true);
+    try {
+      const r = await applyPrevisionalToPayslip(editPayslipTarget.id);
+      setEditPayslipTarget(r.data);
+      setEditDeductionLines(deductionLinesFromPayslipMeta(r.data.meta));
+      setEditPayslipGross(String(r.data.gross_amount));
+      setEditPayslipDeductions(String(r.data.deductions_amount));
+      setEditPayslipNet(String(r.data.net_amount));
+      setEditPayslipNetTouched(false);
+      toast({ title: "Previsional aplicado", description: "Se actualizó la línea AFP/ONP en el desglose." });
+    } catch (err) {
+      toast({
+        title: "No se pudo aplicar",
+        description: payrollMutationErrorMessage(err),
+        variant: "destructive",
+      });
+    } finally {
+      setEditApplyPrevisionalBusy(false);
+    }
+  };
+
+  const handleConfirmDeletePayslip = async () => {
+    if (!payslipToDelete) return;
+    const deletedId = payslipToDelete.id;
+    setPayslipDeleteSaving(true);
+    try {
+      await deletePayslip(deletedId);
+      toast({ title: "Boleta eliminada", description: "El registro se eliminó correctamente." });
+      setPayslipToDelete(null);
+      setPayslipReloadKey((k) => k + 1);
+      if (previewId === deletedId) setPreviewId(null);
+    } catch (err) {
+      toast({
+        title: "No se pudo eliminar",
+        description: payrollMutationErrorMessage(err),
+        variant: "destructive",
+      });
+    } finally {
+      setPayslipDeleteSaving(false);
     }
   };
 
@@ -509,23 +801,25 @@ export default function PayrollPage() {
     }
   };
 
-  const handleNotifyPayslipEmployee = async () => {
+  const handleApprovePayslip = async () => {
     if (!previewSlip) return;
-    setPayslipNotifyBusy(true);
+    setPayslipApproveBusy(true);
     try {
-      await notifyPayslipEmployee(previewSlip.id);
+      const res = await approvePayslip(previewSlip.id);
       toast({
-        title: "Notificación registrada",
-        description: "El empleado verá el aviso en el portal (puede haber notificaciones anteriores del mismo período).",
+        title: "Boleta aprobada",
+        description: "El empleado podrá verla en su portal y se registró la notificación correspondiente.",
       });
+      setPayslipReloadKey((k) => k + 1);
+      setPreviewId(res.data.id);
     } catch (err) {
       toast({
-        title: "No se pudo enviar la notificación",
+        title: "No se pudo aprobar la boleta",
         description: payrollMutationErrorMessage(err),
         variant: "destructive",
       });
     } finally {
-      setPayslipNotifyBusy(false);
+      setPayslipApproveBusy(false);
     }
   };
 
@@ -767,7 +1061,7 @@ export default function PayrollPage() {
         <CardHeader>
           <CardTitle className="text-base">
             {previewSlip && previewEmployee
-              ? `Vista Previa de Boleta — ${previewEmployee.full_name}`
+              ? `Vista Previa de Boleta — ${formatEmployeeName(previewEmployee)}`
               : "Vista Previa de Boleta"}
           </CardTitle>
         </CardHeader>
@@ -802,7 +1096,7 @@ export default function PayrollPage() {
                 <Separator />
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                   {[
-                    ["Empleado", previewEmployee?.full_name ?? `#${previewSlip.employee_id}`],
+                    ["Empleado", previewEmployee ? formatEmployeeName(previewEmployee) : `#${previewSlip.employee_id}`],
                     ["DNI", previewEmployee?.dni ?? "—"],
                     ["Área", previewEmployee?.department_id != null ? (deptById[previewEmployee.department_id] ?? "—") : "—"],
                     ["Puesto", previewEmployee?.position ?? "—"],
@@ -815,8 +1109,21 @@ export default function PayrollPage() {
                 </div>
                 <div className="flex flex-wrap gap-2 items-center">
                   <span className="text-xs text-muted-foreground">Estado boleta</span>
-                  <Badge variant="secondary" className="text-xs">
-                    {previewSlip.status}
+                  <Badge
+                    variant={previewSlip.status === "aprobada" ? "default" : "secondary"}
+                    className={cn(
+                      "text-xs font-medium border",
+                      previewSlip.status === "aprobada" &&
+                        "bg-emerald-600 hover:bg-emerald-600 text-white border-emerald-600",
+                      previewSlip.status === "pendiente" &&
+                        "bg-amber-100 text-amber-950 border-amber-200 dark:bg-amber-950 dark:text-amber-50 dark:border-amber-800",
+                    )}
+                  >
+                    {previewSlip.status === "aprobada"
+                      ? "Aprobada"
+                      : previewSlip.status === "pendiente"
+                        ? "Pendiente"
+                        : previewSlip.status}
                   </Badge>
                 </div>
                 <Separator />
@@ -843,7 +1150,8 @@ export default function PayrollPage() {
                     </p>
                   ) : previsionalData.status === "missing_legal_rate" ? (
                     <p className="text-xs text-amber-800 dark:text-amber-200/90">
-                      No hay tasa legal configurada para la fecha de referencia {previsionalData.reference_date}.
+                      No hay tasa legal configurada para la fecha de referencia{" "}
+                      {formatAppDate(previsionalData.reference_date)}.
                       {previsionalData.legal_parameter_key != null ? ` (${previsionalData.legal_parameter_key})` : ""}
                     </p>
                   ) : (
@@ -868,7 +1176,7 @@ export default function PayrollPage() {
                       </div>
                       <div className="sm:col-span-2">
                         <span className="text-muted-foreground">Fecha referencia legal</span>
-                        <p className="font-medium">{previsionalData.reference_date}</p>
+                        <p className="font-medium">{formatAppDate(previsionalData.reference_date)}</p>
                       </div>
                     </div>
                   )}
@@ -892,6 +1200,21 @@ export default function PayrollPage() {
                   </div>
                   <div>
                     <p className="text-sm font-semibold mb-2">Descuentos</p>
+                    {(() => {
+                      const m = previewSlip.meta as Record<string, unknown> | null | undefined;
+                      const pb = m?.payslip_breakdown as { deductions?: { label: string; amount: number }[] } | undefined;
+                      const rows = pb?.deductions;
+                      return Array.isArray(rows) && rows.length > 0 ? (
+                        <ul className="text-xs space-y-1 mb-2 border-b border-border pb-2">
+                          {rows.map((r, i) => (
+                            <li key={i} className="flex justify-between gap-2">
+                              <span className="text-muted-foreground truncate">{r.label}</span>
+                              <span className="text-destructive shrink-0">{formatPen(String(r.amount))}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null;
+                    })()}
                     <div className="flex justify-between text-sm py-1">
                       <span className="text-muted-foreground">Total descuentos</span>
                       <span className="text-destructive">{formatPen(previewSlip.deductions_amount)}</span>
@@ -927,18 +1250,25 @@ export default function PayrollPage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="gap-1.5"
+                  className="gap-1.5 border-emerald-600/40 text-emerald-800 hover:bg-emerald-50 dark:text-emerald-100 dark:hover:bg-emerald-950/40"
                   type="button"
-                  disabled={!previewSlip || !canSendPayslipNotification || payslipNotifyBusy}
-                  title={
-                    payslipNotifyBusy || canSendPayslipNotification
-                      ? undefined
-                      : "Requiere permisos de envío de nómina y ver nómina"
+                  disabled={
+                    !previewSlip ||
+                    !canGeneratePayroll ||
+                    payslipApproveBusy ||
+                    previewSlip.status === "aprobada"
                   }
-                  onClick={() => void handleNotifyPayslipEmployee()}
+                  title={
+                    previewSlip?.status === "aprobada"
+                      ? "Esta boleta ya está aprobada"
+                      : !canGeneratePayroll
+                        ? "Requiere permiso para generar nómina"
+                        : undefined
+                  }
+                  onClick={() => void handleApprovePayslip()}
                 >
-                  <Send className="w-4 h-4" />
-                  {payslipNotifyBusy ? "Enviando…" : "Enviar al Empleado"}
+                  <CheckCircle2 className="w-4 h-4" />
+                  {payslipApproveBusy ? "Aprobando…" : "Aprobar boleta"}
                 </Button>
               </div>
             </>
@@ -1019,7 +1349,7 @@ export default function PayrollPage() {
                   const emp = employeeById[p.employee_id];
                   const area =
                     emp?.department_id != null ? (deptById[emp.department_id] ?? "—") : "—";
-                  const name = emp?.full_name ?? `#${p.employee_id}`;
+                  const name = emp ? formatEmployeeName(emp) : `#${p.employee_id}`;
                   const sel = previewSlip?.id === p.id;
                   return (
                     <tr
@@ -1039,16 +1369,31 @@ export default function PayrollPage() {
                             e.stopPropagation();
                           }}
                         >
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={(e) => handleOpenEditPayslip(p, e)}
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                            Editar
-                          </Button>
+                          <div className="inline-flex flex-wrap gap-2 justify-end">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={(e) => handleOpenEditPayslip(p, e)}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              Editar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5 text-destructive border-destructive/40 hover:bg-destructive/10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPayslipToDelete(p);
+                              }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Eliminar
+                            </Button>
+                          </div>
                         </td>
                       ) : null}
                     </tr>
@@ -1121,7 +1466,7 @@ export default function PayrollPage() {
       </Dialog>
 
       <Dialog open={payslipDialogOpen} onOpenChange={setPayslipDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nueva boleta</DialogTitle>
           </DialogHeader>
@@ -1133,14 +1478,14 @@ export default function PayrollPage() {
             ) : null}
             <div className="space-y-2">
               <Label htmlFor="ps-emp">Empleado</Label>
-              <Select value={payslipEmployeeId} onValueChange={setPayslipEmployeeId}>
+              <Select value={payslipEmployeeId} onValueChange={handlePayslipEmployeeChange}>
                 <SelectTrigger id="ps-emp">
                   <SelectValue placeholder="Seleccionar empleado" />
                 </SelectTrigger>
                 <SelectContent>
                   {employeesList.map((e) => (
                     <SelectItem key={e.id} value={String(e.id)}>
-                      {e.full_name}
+                      {formatEmployeeName(e)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1155,23 +1500,165 @@ export default function PayrollPage() {
                   min={0}
                   step="0.01"
                   inputMode="decimal"
-                  placeholder="0.00"
+                  placeholder={payslipEmployeeId ? "0.00" : "—"}
                   value={payslipGross}
-                  onChange={(e) => handlePayslipGrossChange(e.target.value)}
+                  disabled
+                  className="bg-muted cursor-not-allowed"
+                  title="Tomado del sueldo del perfil del empleado"
                 />
+                <p className="text-xs text-muted-foreground">
+                  {payslipEmployeeId
+                    ? "Importe bruto según el sueldo registrado en el perfil del empleado; no se puede editar aquí."
+                    : "Selecciona un empleado para cargar el bruto desde su perfil."}
+                </p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="ps-ded">Descuentos</Label>
-                <Input
-                  id="ps-ded"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  inputMode="decimal"
-                  placeholder="0"
-                  value={payslipDeductions}
-                  onChange={(e) => handlePayslipDeductionsChange(e.target.value)}
-                />
+              <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Descuentos (desglose)</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setCreateDeductionLines((prev) => [
+                        ...prev,
+                        newDeductionLine({
+                          code: "income_tax",
+                          label: "Impuesto a la renta / 5ta categoría",
+                          amount: "0",
+                        }),
+                      ])
+                    }
+                  >
+                    + Renta
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setCreateDeductionLines((prev) => [
+                        ...prev,
+                        newDeductionLine({ code: "other", label: "Otro descuento", amount: "0" }),
+                      ])
+                    }
+                  >
+                    + Otro
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={!payslipEmployeeId || !selectedPeriodId || attendancePreviewBusy}
+                    onClick={() => void handleAttendanceSuggestionCreate()}
+                  >
+                    {attendancePreviewBusy ? "…" : "Sugerencia asistencia"}
+                  </Button>
+                </div>
+                {createInstallmentPlans.length > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Planes de cuotas activos</p>
+                    <div className="flex flex-wrap gap-2">
+                      {createInstallmentPlans.map((pl) => (
+                        <Button
+                          key={pl.id}
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="text-xs h-8"
+                          onClick={() => appendInstallmentLine(pl, setCreateDeductionLines)}
+                        >
+                          Cuota: {pl.label} ({formatPen(pl.next_installment_amount ?? pl.installment_amount)})
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                  <div className="space-y-1 sm:col-span-2">
+                    <Label className="text-xs">Nuevo plan (total / meses)</Label>
+                    <div className="flex flex-wrap gap-2">
+                      <Input
+                        placeholder="Etiqueta"
+                        value={newPlanLabel}
+                        onChange={(e) => setNewPlanLabel(e.target.value)}
+                        className="h-8 text-sm max-w-[140px]"
+                      />
+                      <Input
+                        type="number"
+                        placeholder="Total PEN"
+                        value={newPlanTotal}
+                        onChange={(e) => setNewPlanTotal(e.target.value)}
+                        className="h-8 text-sm max-w-[100px]"
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        placeholder="Meses"
+                        value={newPlanMonths}
+                        onChange={(e) => setNewPlanMonths(e.target.value)}
+                        className="h-8 text-sm max-w-[80px]"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={newPlanSaving || !payslipEmployeeId}
+                        onClick={() => void handleCreateInstallmentPlan()}
+                      >
+                        {newPlanSaving ? "…" : "Crear plan"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+                {createDeductionLines.length > 0 ? (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {createDeductionLines.map((line) => (
+                      <div key={line.localId} className="grid grid-cols-12 gap-2 items-center text-sm">
+                        <Input
+                          className="col-span-5 h-8 text-xs"
+                          value={line.label}
+                          onChange={(e) =>
+                            setCreateDeductionLines((prev) =>
+                              prev.map((l) => (l.localId === line.localId ? { ...l, label: e.target.value } : l)),
+                            )
+                          }
+                        />
+                        <Input
+                          type="number"
+                          step="0.01"
+                          className="col-span-3 h-8 text-xs"
+                          value={line.amount}
+                          onChange={(e) =>
+                            setCreateDeductionLines((prev) =>
+                              prev.map((l) => (l.localId === line.localId ? { ...l, amount: e.target.value } : l)),
+                            )
+                          }
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="col-span-1 h-8 w-8 shrink-0 text-destructive"
+                          onClick={() =>
+                            setCreateDeductionLines((prev) => prev.filter((l) => l.localId !== line.localId))
+                          }
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Sin líneas de descuento. Total descuentos: 0.</p>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="ps-ded-total">Total descuentos</Label>
+                  <Input id="ps-ded-total" readOnly value={payslipDeductions} className="bg-muted h-9 text-sm" />
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ps-net">Neto</Label>
@@ -1219,7 +1706,7 @@ export default function PayrollPage() {
           if (!open) setEditPayslipTarget(null);
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar boleta</DialogTitle>
           </DialogHeader>
@@ -1230,7 +1717,9 @@ export default function PayrollPage() {
                 {" · "}
                 Empleado:{" "}
                 <span className="font-medium text-foreground">
-                  {employeeById[editPayslipTarget.employee_id]?.full_name ?? `#${editPayslipTarget.employee_id}`}
+                  {employeeById[editPayslipTarget.employee_id]
+                    ? formatEmployeeName(employeeById[editPayslipTarget.employee_id]!)
+                    : `#${editPayslipTarget.employee_id}`}
                 </span>
               </p>
             ) : null}
@@ -1248,18 +1737,124 @@ export default function PayrollPage() {
                   onChange={(e) => handleEditPayslipGrossChange(e.target.value)}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="ps-edit-ded">Descuentos</Label>
-                <Input
-                  id="ps-edit-ded"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  inputMode="decimal"
-                  placeholder="0"
-                  value={editPayslipDeductions}
-                  onChange={(e) => handleEditPayslipDeductionsChange(e.target.value)}
-                />
+              <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <ClipboardList className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Descuentos (desglose)</span>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={!editPayslipTarget || !selectedPeriodId || attendancePreviewBusy}
+                    onClick={() => void handleAttendanceSuggestionEdit()}
+                  >
+                    {attendancePreviewBusy ? "…" : "Sugerencia asistencia"}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!editPayslipTarget || editApplyPrevisionalBusy}
+                    onClick={() => void handleApplyPrevisionalEdit()}
+                  >
+                    {editApplyPrevisionalBusy ? "…" : "Aplicar AFP/ONP"}
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setEditDeductionLines((prev) => [
+                        ...prev,
+                        newDeductionLine({
+                          code: "income_tax",
+                          label: "Impuesto a la renta / 5ta categoría",
+                          amount: "0",
+                        }),
+                      ])
+                    }
+                  >
+                    + Renta
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setEditDeductionLines((prev) => [
+                        ...prev,
+                        newDeductionLine({ code: "other", label: "Otro descuento", amount: "0" }),
+                      ])
+                    }
+                  >
+                    + Otro
+                  </Button>
+                </div>
+                {editInstallmentPlans.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {editInstallmentPlans.map((pl) => (
+                      <Button
+                        key={pl.id}
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="text-xs h-8"
+                        onClick={() => appendInstallmentLine(pl, setEditDeductionLines)}
+                      >
+                        Cuota: {pl.label} ({formatPen(pl.next_installment_amount ?? pl.installment_amount)})
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
+                {editDeductionLines.length > 0 ? (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {editDeductionLines.map((line) => (
+                      <div key={line.localId} className="grid grid-cols-12 gap-2 items-center text-sm">
+                        <Input
+                          className="col-span-5 h-8 text-xs"
+                          value={line.label}
+                          onChange={(e) =>
+                            setEditDeductionLines((prev) =>
+                              prev.map((l) => (l.localId === line.localId ? { ...l, label: e.target.value } : l)),
+                            )
+                          }
+                        />
+                        <Input
+                          type="number"
+                          step="0.01"
+                          className="col-span-3 h-8 text-xs"
+                          value={line.amount}
+                          onChange={(e) =>
+                            setEditDeductionLines((prev) =>
+                              prev.map((l) => (l.localId === line.localId ? { ...l, amount: e.target.value } : l)),
+                            )
+                          }
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="col-span-1 h-8 w-8 shrink-0 text-destructive"
+                          onClick={() =>
+                            setEditDeductionLines((prev) => prev.filter((l) => l.localId !== line.localId))
+                          }
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Sin líneas; total descuentos 0.</p>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="ps-edit-ded">Total descuentos</Label>
+                  <Input id="ps-edit-ded" readOnly value={editPayslipDeductions} className="bg-muted h-9 text-sm" />
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ps-edit-net">Neto</Label>
@@ -1294,6 +1889,29 @@ export default function PayrollPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={payslipToDelete !== null} onOpenChange={(open) => !open && !payslipDeleteSaving && setPayslipToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar esta boleta?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se borrará el registro de nómina de forma permanente. El empleado dejará de ver esta boleta en su portal y se
+              eliminarán las notificaciones asociadas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={payslipDeleteSaving}>Cancelar</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={payslipDeleteSaving}
+              onClick={() => void handleConfirmDeletePayslip()}
+            >
+              {payslipDeleteSaving ? "Eliminando…" : "Eliminar"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

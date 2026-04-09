@@ -19,6 +19,8 @@ import { fetchAllAttendanceInRange, type AttendanceRecord } from "@/api/attendan
 import { fetchPayrollPeriods, fetchAllPayslipsForPeriod, type PayrollPeriod, type Payslip } from "@/api/payroll";
 import { fetchAllEmployees } from "@/api/employees";
 import { MonthlyHireExitFlowCard } from "@/components/reports/MonthlyHireExitFlowCard";
+import { formatEmployeeName } from "@/lib/employeeName";
+import { formatAppDate } from "@/lib/formatAppDate";
 
 const ATTENDANCE_STATUS_LABEL: Record<string, string> = {
   asistido: "Asistido",
@@ -32,14 +34,6 @@ const ATTENDANCE_STATUS_LABEL: Record<string, string> = {
 
 function labelAttendanceStatus(s: string): string {
   return ATTENDANCE_STATUS_LABEL[s] ?? s;
-}
-
-function formatDisplayDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = iso.slice(0, 10);
-  if (d.length !== 10) return iso;
-  const [y, m, day] = d.split("-");
-  return `${day}/${m}/${y}`;
 }
 
 function formatMoneyAmount(s: string): string {
@@ -100,7 +94,7 @@ export default function ReportsPage() {
       .then((list) => {
         if (cancelled) return;
         const m: Record<number, string> = {};
-        for (const e of list) m[e.id] = e.full_name;
+        for (const e of list) m[e.id] = formatEmployeeName(e);
         setEmployeeNames(m);
       })
       .catch(() => {
@@ -499,10 +493,10 @@ export default function ReportsPage() {
               <tbody>
                 {contractsRows.map((c) => (
                   <tr key={c.employee_id} className="border-b border-border last:border-0">
-                    <td className="px-5 py-3 text-sm font-medium">{c.full_name}</td>
+                    <td className="px-5 py-3 text-sm font-medium">{formatEmployeeName(c)}</td>
                     <td className="px-5 py-3 text-sm">{c.department_name}</td>
                     <td className="px-5 py-3 text-sm">{c.contract_type?.trim() ? c.contract_type : "—"}</td>
-                    <td className="px-5 py-3 text-sm text-warning font-medium">{formatDisplayDate(c.contract_end)}</td>
+                    <td className="px-5 py-3 text-sm text-warning font-medium">{formatAppDate(c.contract_end)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -573,7 +567,7 @@ export default function ReportsPage() {
                 <tbody>
                   {attRows.map((r) => (
                     <tr key={r.id} className="border-b border-border last:border-0">
-                      <td className="px-5 py-3 text-sm tabular-nums">{formatDisplayDate(r.record_date)}</td>
+                      <td className="px-5 py-3 text-sm tabular-nums">{formatAppDate(r.record_date)}</td>
                       <td className="px-5 py-3 text-sm">
                         {employeeNames[r.employee_id] ?? `ID ${r.employee_id}`}
                       </td>

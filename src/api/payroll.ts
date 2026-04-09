@@ -92,6 +92,16 @@ export async function updatePayslip(id: number, body: PayslipAmountsPatchBody) {
   });
 }
 
+export async function deletePayslip(id: number): Promise<void> {
+  await apiRequest<void>(`/payslips/${id}`, { method: "DELETE" });
+}
+
+export async function approvePayslip(id: number) {
+  return apiRequest<components["schemas"]["PayslipEnvelope"]>(`/payslips/${id}/approve`, {
+    method: "POST",
+  });
+}
+
 export async function notifyPayslipEmployee(id: number) {
   return apiRequest<components["schemas"]["PayslipNotifyEnvelope"]>(`/payslips/${id}/notify-employee`, {
     method: "POST",
@@ -141,4 +151,38 @@ export async function downloadPayrollPayslipsZip(payrollPeriodId: number, areaFi
 
 export async function downloadPayslipPdf(id: number): Promise<void> {
   await downloadReportPdf(`payslips/${id}/pdf`);
+}
+
+export type AttendanceDeductionPreviewBody = components["schemas"]["AttendanceDeductionPreviewWrite"];
+
+export async function previewAttendanceDeductions(body: AttendanceDeductionPreviewBody) {
+  return apiRequest<components["schemas"]["AttendanceDeductionPreviewEnvelope"]>(
+    "/payslips/preview-attendance-deductions",
+    { method: "POST", body },
+  );
+}
+
+export async function applyPrevisionalToPayslip(id: number) {
+  return apiRequest<components["schemas"]["PayslipEnvelope"]>(`/payslips/${id}/apply-previsional`, {
+    method: "POST",
+  });
+}
+
+export type DeductionInstallmentPlan = components["schemas"]["DeductionInstallmentPlan"];
+export type DeductionInstallmentPlanWriteBody = components["schemas"]["DeductionInstallmentPlanWrite"];
+
+export async function fetchDeductionInstallmentPlans(employeeId: number, params: { status?: string } = {}) {
+  const q = new URLSearchParams();
+  if (params.status) q.set("status", params.status);
+  const s = q.toString();
+  return apiRequest<components["schemas"]["DeductionInstallmentPlanListEnvelope"]>(
+    `/employees/${employeeId}/deduction-installment-plans${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function createDeductionInstallmentPlan(employeeId: number, body: DeductionInstallmentPlanWriteBody) {
+  return apiRequest<components["schemas"]["DeductionInstallmentPlanEnvelope"]>(
+    `/employees/${employeeId}/deduction-installment-plans`,
+    { method: "POST", body },
+  );
 }

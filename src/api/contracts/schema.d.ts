@@ -744,6 +744,155 @@ export interface paths {
         };
         trace?: never;
     };
+    "/employees/{id}/deduction-installment-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["idPath"];
+            };
+            cookie?: never;
+        };
+        /** List deduction installment plans for employee */
+        get: {
+            parameters: {
+                query?: {
+                    status?: string;
+                };
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeductionInstallmentPlanListEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        /** Create deduction installment plan */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DeductionInstallmentPlanWrite"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeductionInstallmentPlanEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                422: components["responses"]["ValidationError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/employees/{id}/deduction-installment-plans/{plan}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["idPath"];
+                plan: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete deduction installment plan */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                    plan: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update deduction installment plan (label, notes, status) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                    plan: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DeductionInstallmentPlanPatch"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeductionInstallmentPlanEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                422: components["responses"]["ValidationError"];
+            };
+        };
+        trace?: never;
+    };
     "/employees/{id}/termination": {
         parameters: {
             query?: never;
@@ -1561,12 +1710,38 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete payslip
+         * @description Removes the payslip record. Deletes portal notifications that reference this payslip (`meta.payslip_id`). Requires the same department scope as other payslip mutations.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
         options?: never;
         head?: never;
         /**
-         * Update payslip amounts
-         * @description Adjusts gross, deductions, and net only. Does not change employee, period, meta, or status.
+         * Update payslip amounts and optional meta breakdown
+         * @description Updates gross, deductions, net, and optional meta (e.g. payslip_breakdown). Client cannot overwrite legal_parameters_context. When apply_previsional_assist is true, merges AFP/ONP line into meta. If meta.payslip_breakdown.deductions has lines, server aligns deductions_amount and net_amount with the sum of lines.
          */
         patch: {
             parameters: {
@@ -1600,6 +1775,59 @@ export interface paths {
         };
         trace?: never;
     };
+    "/payslips/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve payslip and notify employee
+         * @description Sets status to `aprobada`, records a portal notification for the employee (same as notify-employee), and audit log. Idempotent if already approved (returns current payslip without duplicating notifications).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PayslipEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                /** @description Invalid installment deduction lines for approval */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payslips/notify-period": {
         parameters: {
             query?: never;
@@ -1611,7 +1839,7 @@ export interface paths {
         put?: never;
         /**
          * Notify employees for all payslips in a payroll period
-         * @description Records one `payslip.available` notification per payslip matching scope (and optional department filter).
+         * @description Records one `payslip.available` notification per payslip matching scope (and optional department filter). Only payslips with status `aprobada` are included.
          */
         post: {
             parameters: {
@@ -1657,7 +1885,7 @@ export interface paths {
         put?: never;
         /**
          * Notify employee (payslip available in portal)
-         * @description Records a portal notification for the payslip employee (same kind as on create). Idempotent in behavior: each call adds a notification row.
+         * @description Records a portal notification for the payslip employee. Requires status `aprobada`; each call adds a notification row.
          */
         post: {
             parameters: {
@@ -1727,6 +1955,97 @@ export interface paths {
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["Forbidden"];
+                422: components["responses"]["ValidationError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payslips/preview-attendance-deductions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Suggest absence and lateness deduction amounts from attendance
+         * @description Counts unjustified absences and tardiness in the payroll month; suggests PEN amounts from gross (proportional).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AttendanceDeductionPreviewWrite"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AttendanceDeductionPreviewEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                422: components["responses"]["ValidationError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payslips/{id}/apply-previsional": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-apply previsional deduction line on existing payslip
+         * @description Merges AFP/ONP into meta and syncs deductions/net columns from breakdown lines.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PayslipEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
                 422: components["responses"]["ValidationError"];
             };
         };
@@ -1817,7 +2136,10 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create asset */
+        /**
+         * Create asset
+         * @description Accepts JSON or multipart/form-data. Use multipart to attach optional PDF `loan_act` (acta de préstamo).
+         */
         post: {
             parameters: {
                 query?: never;
@@ -1828,6 +2150,13 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": components["schemas"]["AssetWrite"];
+                    "multipart/form-data": components["schemas"]["AssetWrite"] & {
+                        /**
+                         * Format: binary
+                         * @description PDF acta de préstamo (optional)
+                         */
+                        loan_act?: string;
+                    };
                 };
             };
             responses: {
@@ -1850,6 +2179,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assets/{id}/loan-act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["idPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Download loan agreement PDF
+         * @description Returns the uploaded acta de préstamo PDF when present.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PDF file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/pdf": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        /**
+         * Upload or replace loan agreement PDF
+         * @description Requires assets.manage. Replaces existing acta file if any.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        loan_act: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AssetEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                422: components["responses"]["ValidationError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/assets/{id}": {
         parameters: {
             query?: never;
@@ -1862,7 +2273,33 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete asset
+         * @description Removes the asset and deletes the loan PDF from storage if present.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
         options?: never;
         head?: never;
         /** Update asset */
@@ -1895,6 +2332,95 @@ export interface paths {
                 422: components["responses"]["ValidationError"];
             };
         };
+        trace?: never;
+    };
+    "/portal/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List assets on loan to the current employee
+         * @description Requires portal.view. Returns assets assigned to the linked employee record (excludes status Devuelto).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    page?: components["parameters"]["page"];
+                    per_page?: components["parameters"]["perPage"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AssetPaginatedEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/portal/assets/{id}/loan-act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["idPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Download loan agreement PDF for own asset
+         * @description Requires portal.view. Only when the asset is assigned to the current user's employee record.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PDF file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/pdf": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/settings/mail": {
@@ -2064,7 +2590,8 @@ export interface components {
             department?: components["schemas"]["Department"] | null;
             employee?: null | {
                 id: number;
-                full_name: string;
+                first_name: string;
+                last_name: string;
             };
         };
         UserMeEnvelope: {
@@ -2073,6 +2600,10 @@ export interface components {
         Department: {
             id: number;
             name: string;
+            positions: {
+                id: number;
+                name: string;
+            }[];
             /** Format: date-time */
             created_at?: string | null;
             /** Format: date-time */
@@ -2083,6 +2614,8 @@ export interface components {
         };
         DepartmentWrite: {
             name: string;
+            /** @description Optional job titles for this area; order is preserved. Empty strings are ignored. */
+            positions?: string[];
         };
         DepartmentEnvelope: {
             data: components["schemas"]["Department"];
@@ -2094,13 +2627,19 @@ export interface components {
             user_id?: number | null;
             department_id?: number | null;
             manager_id?: number | null;
-            full_name: string;
+            first_name: string;
+            last_name: string;
             dni: string;
             /** Format: date */
             birth_date?: string | null;
             education_level?: string | null;
             degree?: string | null;
             phone?: string | null;
+            /**
+             * Format: email
+             * @description Corporate email from the linked user account (read-only).
+             */
+            corporate_email?: string | null;
             personal_email?: string | null;
             address?: string | null;
             emergency_contact_name?: string | null;
@@ -2119,8 +2658,6 @@ export interface components {
             contract_end?: string | null;
             status: components["schemas"]["EmployeeStatus"];
             photo_path?: string | null;
-            /** @description Public avatar URL of linked system user (e.g. Google); for UI when photo_path is empty */
-            linked_user_avatar_path?: string | null;
             /** Format: date-time */
             created_at?: string | null;
             /** Format: date-time */
@@ -2130,7 +2667,8 @@ export interface components {
             user_id?: number | null;
             department_id?: number | null;
             manager_id?: number | null;
-            full_name: string;
+            first_name: string;
+            last_name: string;
             dni: string;
             /** Format: date */
             birth_date?: string | null;
@@ -2457,11 +2995,75 @@ export interface components {
             /** Format: date-time */
             updated_at?: string | null;
         };
-        /** @description Amount fields only; deductions_amount defaults to 0 when omitted (same as create). */
+        /** @description deductions_amount defaults to 0 when omitted. If meta.payslip_breakdown.deductions has lines, server sets deductions_amount and net_amount from those lines and gross_amount. */
         PayslipAmountsPatch: {
             gross_amount: number;
             deductions_amount?: number;
             net_amount: number;
+            /** @description Merge AFP/ONP line into meta.payslip_breakdown. */
+            apply_previsional_assist?: boolean;
+            /** @description Optional; cannot set legal_parameters_context (server preserves existing). */
+            meta?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        AttendanceDeductionPreviewWrite: {
+            employee_id: number;
+            payroll_period_id: number;
+            gross_amount: number;
+        };
+        AttendanceDeductionPreviewData: {
+            /** Format: date */
+            period_from: string;
+            /** Format: date */
+            period_to: string;
+            absence_days_unjustified: number;
+            tardiness_events: number;
+            tardiness_deficit_minutes: number;
+            full_time_daily_minutes: number;
+            suggested_deduction_absence: number;
+            suggested_deduction_lateness: number;
+            formula_note: string;
+        };
+        AttendanceDeductionPreviewEnvelope: {
+            data: components["schemas"]["AttendanceDeductionPreviewData"];
+        };
+        DeductionInstallmentPlan: {
+            id: number;
+            employee_id: number;
+            label: string;
+            total_amount: string;
+            installment_count: number;
+            installment_amount: string;
+            installments_applied: number;
+            status: string;
+            start_payroll_period_id?: number | null;
+            notes?: string | null;
+            next_installment_number?: number | null;
+            next_installment_amount?: string | null;
+            /** Format: date-time */
+            created_at?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+        };
+        DeductionInstallmentPlanWrite: {
+            label: string;
+            total_amount: number;
+            installment_count: number;
+            start_payroll_period_id?: number | null;
+            notes?: string | null;
+        };
+        DeductionInstallmentPlanPatch: {
+            label?: string;
+            notes?: string | null;
+            /** @enum {string} */
+            status?: "active" | "cancelled";
+        };
+        DeductionInstallmentPlanEnvelope: {
+            data: components["schemas"]["DeductionInstallmentPlan"];
+        };
+        DeductionInstallmentPlanListEnvelope: {
+            data: components["schemas"]["DeductionInstallmentPlan"][];
         };
         PayslipWrite: {
             payroll_period_id: number;
@@ -2516,6 +3118,8 @@ export interface components {
             observations?: string | null;
             /** Format: date */
             assigned_at?: string | null;
+            /** @description Whether a PDF acta de préstamo was uploaded */
+            has_loan_act: boolean;
             /** Format: date-time */
             created_at?: string | null;
             /** Format: date-time */

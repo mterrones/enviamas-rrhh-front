@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -11,10 +12,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarCheck, FileSpreadsheet, FileText, Download, CalendarIcon } from "lucide-react";
+import { CalendarCheck, FileSpreadsheet, FileText, Download, CalendarIcon, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { format, differenceInCalendarDays, parseISO } from "date-fns";
-import { es } from "date-fns/locale";
+import { format, differenceInCalendarDays } from "date-fns";
+import { formatAppDate } from "@/lib/formatAppDate";
+import { formatEmployeeName } from "@/lib/employeeName";
 import { cn } from "@/lib/utils";
 import { formatDecimalHoursAsDuration } from "@/lib/formatWorkedDuration";
 import {
@@ -273,27 +275,43 @@ function deriveAttendanceFormState(checkIn: string, checkOut: string, status: At
 }
 
 function displayVacationRange(start: string, end: string): string {
-  try {
-    const a = parseISO(start.length >= 10 ? start.slice(0, 10) : start);
-    const b = parseISO(end.length >= 10 ? end.slice(0, 10) : end);
-    return `${format(a, "dd/MM", { locale: es })} — ${format(b, "dd/MM/yyyy", { locale: es })}`;
-  } catch {
-    return `${start} — ${end}`;
-  }
+  const a = formatAppDate(start);
+  const b = formatAppDate(end);
+  if (a === "—" && b === "—") return `${start} — ${end}`;
+  return `${a} — ${b}`;
 }
 
 function formatAttendanceDateLabel(iso: string): string {
-  if (!iso || iso.length < 10) return "—";
-  try {
-    return format(parseISO(iso.slice(0, 10)), "dd/MM/yyyy", { locale: es });
-  } catch {
-    return iso.slice(0, 10);
-  }
+  return formatAppDate(iso);
 }
+
+type AttendanceMainTab = "calendario" | "vacaciones";
 
 export default function AttendancePage() {
   const { toast } = useToast();
   const { hasPermission } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const mainTabParam = searchParams.get("tab");
+  const mainTab: AttendanceMainTab = mainTabParam === "vacaciones" ? "vacaciones" : "calendario";
+
+  const setMainTab = useCallback(
+    (value: string) => {
+      const next: AttendanceMainTab = value === "vacaciones" ? "vacaciones" : "calendario";
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          if (next === "vacaciones") {
+            p.set("tab", "vacaciones");
+          } else {
+            p.delete("tab");
+          }
+          return p;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
   const canManageVacationRequests = hasPermission("attendance.manage");
   const canApproveVacationRequests = hasPermission("attendance.approve");
   const canManageAttendance = hasPermission("attendance.manage");
@@ -328,7 +346,7 @@ export default function AttendancePage() {
   const [vacationRequests, setVacationRequests] = useState<VacationRequest[]>([]);
   const [vacationLoading, setVacationLoading] = useState(true);
   const [vacationError, setVacationError] = useState<string | null>(null);
-  const [vacationEmployees, setVacationEmployees] = useState<{ id: number; full_name: string }[]>([]);
+  const [vacationEmployees, setVacationEmployees] = useState<{ id: number; displayName: string }[]>([]);
   const [vacationPage, setVacationPage] = useState(1);
   const [vacationMeta, setVacationMeta] = useState({
     current_page: 1,
@@ -337,6 +355,9 @@ export default function AttendancePage() {
     per_page: DEFAULT_LIST_PAGE_SIZE,
   });
   const [statusUpdatingId, setStatusUpdatingId] = useState<number | null>(null);
+  const [vacationCorrectionRow, setVacationCorrectionRow] = useState<VacationRequest | null>(null);
+  const [vacationCorrectionStatus, setVacationCorrectionStatus] = useState<VacationStatus | "">("");
+  const [vacationCorrectionSaving, setVacationCorrectionSaving] = useState(false);
   const [creatingVacation, setCreatingVacation] = useState(false);
   const [selEmpleado, setSelEmpleado] = useState("");
   const [fechaInicio, setFechaInicio] = useState<Date>();
@@ -389,7 +410,7 @@ export default function AttendancePage() {
       try {
         const all = await fetchAllEmployees();
         if (cancelled) return;
-        setVacationEmployees(all.map((e) => ({ id: e.id, full_name: e.full_name })));
+        setVacationEmployees(all.map((e) => ({ id: e.id, displayName: formatEmployeeName(e) })));
       } catch {
         if (!cancelled) setVacationEmployees([]);
       }
@@ -724,7 +745,7 @@ export default function AttendancePage() {
         end_date: format(fechaFin, "yyyy-MM-dd"),
         days: diasCalculados,
       });
-      const empNombre = vacationEmployees.find((e) => e.id === empId)?.full_name ?? `Empleado ${empId}`;
+      const empNombre = vacationEmployees.find((e) => e.id === empId)?.displayName ?? `Empleado ${empId}`;
       toast({ title: "Solicitud enviada", description: `Vacaciones de ${empNombre} registradas como pendiente.` });
       setShowNuevaSolicitud(false);
       setSelEmpleado("");
@@ -768,6 +789,48 @@ export default function AttendancePage() {
     }
   };
 
+  const openVacationCorrection = (v: VacationRequest) => {
+    setVacationCorrectionRow(v);
+    setVacationCorrectionStatus("");
+  };
+
+  const confirmVacationCorrection = async () => {
+    if (!vacationCorrectionRow || vacationCorrectionStatus === "") return;
+    if (vacationCorrectionStatus === vacationCorrectionRow.status) {
+      toast({ title: "Sin cambios", description: "Elige un estado distinto al actual.", variant: "destructive" });
+      return;
+    }
+    const row = vacationCorrectionRow;
+    setVacationCorrectionSaving(true);
+    setStatusUpdatingId(row.id);
+    try {
+      await patchVacationRequestStatus(row.id, { status: vacationCorrectionStatus });
+      toast({
+        title: "Estado actualizado",
+        description: "Se aplicó la corrección; el empleado recibirá notificación en el portal (y correo si aplica).",
+      });
+      setVacationCorrectionRow(null);
+      setVacationCorrectionStatus("");
+      await loadVacationData();
+      if (selEmpleado === String(row.employee_id)) {
+        try {
+          const y = new Date().getFullYear();
+          const rb = await fetchEmployeeVacationBalance(row.employee_id, y);
+          setHrVacBalance(rb.data);
+          setHrVacBalanceError(null);
+        } catch {
+          /* opcional */
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof ApiHttpError ? err.apiError?.message ?? err.message : "No se pudo actualizar el estado";
+      toast({ title: "Error", description: typeof msg === "string" ? msg : "Intenta de nuevo", variant: "destructive" });
+    } finally {
+      setVacationCorrectionSaving(false);
+      setStatusUpdatingId(null);
+    }
+  };
+
   const buildAttendanceExportQuery = (): URLSearchParams | null => {
     const y = parseInt(selectedYear, 10);
     const m = parseInt(selectedMonth, 10);
@@ -798,7 +861,10 @@ export default function AttendancePage() {
       await downloadReportCsv(`reports/exports/attendance.csv?${q.toString()}`);
       const from = q.get("from") ?? "";
       const to = q.get("to") ?? "";
-      toast({ title: "Archivo CSV descargado", description: `Rango: ${from} — ${to}` });
+      toast({
+        title: "Archivo CSV descargado",
+        description: `Rango: ${formatAppDate(from)} — ${formatAppDate(to)}`,
+      });
     } catch (err) {
       const msg =
         err instanceof ApiHttpError ? err.apiError?.message ?? err.message : "No se pudo exportar";
@@ -820,7 +886,10 @@ export default function AttendancePage() {
       await downloadReportXlsx(`reports/exports/attendance.xlsx?${q.toString()}`);
       const from = q.get("from") ?? "";
       const to = q.get("to") ?? "";
-      toast({ title: "Excel descargado", description: `Rango: ${from} — ${to}` });
+      toast({
+        title: "Excel descargado",
+        description: `Rango: ${formatAppDate(from)} — ${formatAppDate(to)}`,
+      });
     } catch (err) {
       const msg =
         err instanceof ApiHttpError ? err.apiError?.message ?? err.message : "No se pudo exportar";
@@ -842,7 +911,10 @@ export default function AttendancePage() {
       await downloadReportPdf(`reports/exports/attendance.pdf?${q.toString()}`);
       const from = q.get("from") ?? "";
       const to = q.get("to") ?? "";
-      toast({ title: "PDF descargado", description: `Rango: ${from} — ${to}` });
+      toast({
+        title: "PDF descargado",
+        description: `Rango: ${formatAppDate(from)} — ${formatAppDate(to)}`,
+      });
     } catch (err) {
       const msg =
         err instanceof ApiHttpError ? err.apiError?.message ?? err.message : "No se pudo exportar";
@@ -914,7 +986,7 @@ export default function AttendancePage() {
         </div>
       </div>
 
-      <Tabs defaultValue="calendario">
+      <Tabs value={mainTab} onValueChange={setMainTab}>
         <TabsList className="bg-card border border-border">
           <TabsTrigger value="calendario">Calendario</TabsTrigger>
           <TabsTrigger value="vacaciones">Vacaciones</TabsTrigger>
@@ -944,7 +1016,7 @@ export default function AttendancePage() {
                       <SelectItem value="all">Todos</SelectItem>
                       {vacationEmployees.map((e) => (
                         <SelectItem key={e.id} value={String(e.id)}>
-                          {e.full_name}
+                          {e.displayName}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1100,7 +1172,7 @@ export default function AttendancePage() {
                           {monthAttendanceRecords.map((r) => (
                             <tr key={r.id} className="border-b border-border last:border-0">
                               <td className="px-3 py-2 whitespace-nowrap tabular-nums">
-                                {r.record_date.length >= 10 ? r.record_date.slice(0, 10) : r.record_date}
+                                {formatAppDate(r.record_date)}
                               </td>
                               <td className="px-3 py-2">{labelAttendanceStatus(r.status)}</td>
                               <td className="px-3 py-2 tabular-nums">{r.check_in ?? "—"}</td>
@@ -1196,13 +1268,14 @@ export default function AttendancePage() {
                   ) : (
                     vacationRequests.map((v) => {
                       const nombre =
-                        vacationEmployees.find((e) => e.id === v.employee_id)?.full_name ?? `#${v.employee_id}`;
+                        vacationEmployees.find((e) => e.id === v.employee_id)?.displayName ?? `#${v.employee_id}`;
                       const st = v.status;
                       const badgeVariant =
                         st === "aprobado" ? "default" : st === "rechazado" ? "destructive" : "secondary";
                       const pending = st === "pendiente";
                       const busy = statusUpdatingId === v.id;
                       const showApprove = pending && canApproveVacationRequests;
+                      const showVacationCorrect = !pending && canApproveVacationRequests;
                       return (
                         <tr key={v.id} className="border-b border-border last:border-0">
                           <td className="px-5 py-3 text-sm font-medium">{nombre}</td>
@@ -1237,6 +1310,19 @@ export default function AttendancePage() {
                                   {busy ? "…" : "Rechazar"}
                                 </Button>
                               </div>
+                            ) : showVacationCorrect ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-xs h-7 gap-1"
+                                type="button"
+                                title="Corregir estado"
+                                disabled={statusUpdatingId !== null}
+                                onClick={() => openVacationCorrection(v)}
+                              >
+                                <Pencil className="w-3 h-3 shrink-0" />
+                                {busy ? "…" : "Corregir"}
+                              </Button>
                             ) : null}
                           </td>
                         </tr>
@@ -1284,7 +1370,7 @@ export default function AttendancePage() {
                 <SelectContent>
                   {vacationEmployees.map((e) => (
                     <SelectItem key={e.id} value={String(e.id)}>
-                      {e.full_name}
+                      {e.displayName}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1314,11 +1400,18 @@ export default function AttendancePage() {
                   <PopoverTrigger asChild>
                     <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !fechaInicio && "text-muted-foreground")}>
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {fechaInicio ? format(fechaInicio, "dd/MM/yyyy") : "Seleccionar"}
+                      {fechaInicio ? formatAppDate(fechaInicio) : "Seleccionar"}
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar mode="single" selected={fechaInicio} onSelect={setFechaInicio} initialFocus className="p-3 pointer-events-auto" />
+                  <PopoverContent
+                    className="z-[100] w-auto p-0"
+                    align="start"
+                    side="bottom"
+                    sideOffset={6}
+                    collisionPadding={16}
+                    onOpenAutoFocus={(e) => e.preventDefault()}
+                  >
+                    <Calendar mode="single" selected={fechaInicio} onSelect={setFechaInicio} initialFocus className="pointer-events-auto" />
                   </PopoverContent>
                 </Popover>
               </div>
@@ -1328,11 +1421,18 @@ export default function AttendancePage() {
                   <PopoverTrigger asChild>
                     <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !fechaFin && "text-muted-foreground")}>
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {fechaFin ? format(fechaFin, "dd/MM/yyyy") : "Seleccionar"}
+                      {fechaFin ? formatAppDate(fechaFin) : "Seleccionar"}
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar mode="single" selected={fechaFin} onSelect={setFechaFin} disabled={(date) => fechaInicio ? date < fechaInicio : false} initialFocus className="p-3 pointer-events-auto" />
+                  <PopoverContent
+                    className="z-[100] w-auto p-0"
+                    align="start"
+                    side="bottom"
+                    sideOffset={6}
+                    collisionPadding={16}
+                    onOpenAutoFocus={(e) => e.preventDefault()}
+                  >
+                    <Calendar mode="single" selected={fechaFin} onSelect={setFechaFin} disabled={(date) => fechaInicio ? date < fechaInicio : false} initialFocus className="pointer-events-auto" />
                   </PopoverContent>
                 </Popover>
               </div>
@@ -1354,6 +1454,73 @@ export default function AttendancePage() {
             </Button>
             <Button type="button" onClick={() => void handleGuardar()} disabled={creatingVacation}>
               {creatingVacation ? "Enviando…" : "Enviar Solicitud"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={vacationCorrectionRow !== null}
+        onOpenChange={(open) => {
+          if (!open && !vacationCorrectionSaving) {
+            setVacationCorrectionRow(null);
+            setVacationCorrectionStatus("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Corregir estado de vacaciones</DialogTitle>
+          </DialogHeader>
+          {vacationCorrectionRow ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Estado actual:{" "}
+                <span className="font-medium text-foreground">{vacationStatusLabel[vacationCorrectionRow.status]}</span>.
+                El empleado será notificado al guardar.
+              </p>
+              <div className="space-y-1.5">
+                <span className="text-sm font-medium">Nuevo estado</span>
+                <Select
+                  value={vacationCorrectionStatus === "" ? undefined : vacationCorrectionStatus}
+                  onValueChange={(val) => setVacationCorrectionStatus(val as VacationStatus)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {vacationCorrectionRow.status !== "pendiente" ? (
+                      <SelectItem value="pendiente">Pendiente (reabrir)</SelectItem>
+                    ) : null}
+                    {vacationCorrectionRow.status !== "aprobado" ? (
+                      <SelectItem value="aprobado">Aprobado</SelectItem>
+                    ) : null}
+                    {vacationCorrectionRow.status !== "rechazado" ? (
+                      <SelectItem value="rechazado">Rechazado</SelectItem>
+                    ) : null}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={vacationCorrectionSaving}
+              onClick={() => {
+                setVacationCorrectionRow(null);
+                setVacationCorrectionStatus("");
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={vacationCorrectionSaving || vacationCorrectionStatus === ""}
+              onClick={() => void confirmVacationCorrection()}
+            >
+              {vacationCorrectionSaving ? "Guardando…" : "Guardar"}
             </Button>
           </DialogFooter>
         </DialogContent>

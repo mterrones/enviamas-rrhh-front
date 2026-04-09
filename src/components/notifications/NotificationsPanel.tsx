@@ -51,14 +51,14 @@ export function NotificationsPanel({ onClose }: Props) {
   }, [onClose]);
 
   const handleClick = async (n: Notification) => {
-    await markNotificationRead(n.id);
+    await markNotificationRead({ id: n.id, source: n.source });
     navigate(n.link);
     onClose();
   };
 
-  const handleDelete = async (e: React.MouseEvent, id: number) => {
+  const handleDelete = async (e: React.MouseEvent, n: Notification) => {
     e.stopPropagation();
-    await dismissNotification(id);
+    await dismissNotification({ id: n.id, source: n.source });
   };
 
   const handleMarkAllRead = async () => {
@@ -145,7 +145,7 @@ export function NotificationsPanel({ onClose }: Props) {
                 </div>
                 <button
                   type="button"
-                  onClick={(e) => void handleDelete(e, n.id)}
+                  onClick={(e) => void handleDelete(e, n)}
                   className="shrink-0 mt-0.5 text-muted-foreground hover:text-destructive transition-colors"
                   aria-label="Descartar notificación"
                 >
