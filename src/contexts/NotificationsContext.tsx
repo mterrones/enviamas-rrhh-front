@@ -63,6 +63,22 @@ function formatNotificationTime(iso: string | null): string {
   return formatAppDateTime(iso);
 }
 
+function linkForPortalNotification(kind: string, meta: Record<string, unknown> | null | undefined): string {
+  const k = (kind ?? "").toLowerCase();
+  const q = new URLSearchParams();
+  if (k === "payslip.available" || k.startsWith("payslip.")) {
+    q.set("tab", "boletas");
+  } else if (k.startsWith("termination.")) {
+    q.set("tab", "datos");
+  } else if (k.startsWith("vacation.") || k.startsWith("resignation.")) {
+    q.set("tab", "solicitudes");
+  } else {
+    q.set("tab", "notificaciones");
+  }
+  const s = q.toString();
+  return s ? `/portal?${s}` : "/portal";
+}
+
 function mapPortalRow(n: PortalEmployeeNotification): Notification {
   const createdAt = n.created_at ?? null;
   return {
@@ -72,7 +88,7 @@ function mapPortalRow(n: PortalEmployeeNotification): Notification {
     description: (n.body ?? "").trim() || "—",
     time: formatNotificationTime(createdAt),
     read: n.read_at != null,
-    link: "/portal",
+    link: linkForPortalNotification(n.kind ?? "", n.meta ?? null),
     source: "portal",
     createdAt,
   };
@@ -89,12 +105,30 @@ function mapUserNotificationKindToType(kind: string): "warning" | "info" | "succ
   return "info";
 }
 
-function linkForApproverUserNotification(kind: string | null | undefined): string {
+function parseMetaEmployeeId(meta: Record<string, unknown> | null | undefined): number | null {
+  if (meta == null || typeof meta !== "object") return null;
+  const raw = meta.employee_id;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function linkForApproverUserNotification(
+  kind: string | null | undefined,
+  meta?: Record<string, unknown> | null,
+): string {
   const k = (kind ?? "").toLowerCase();
+  const employeeId = parseMetaEmployeeId(meta ?? null);
+
   if (k === "resignation.pending" || k.startsWith("resignation.")) {
-    return "/empleados/renuncias";
+    return employeeId != null ? `/empleados/${employeeId}` : "/empleados/renuncias";
   }
   if (k === "vacation.pending" || k.startsWith("vacation.")) {
+    if (employeeId != null) {
+      const q = new URLSearchParams();
+      q.set("tab", "vacaciones");
+      q.set("employee_id", String(employeeId));
+      return `/asistencia?${q.toString()}`;
+    }
     return "/asistencia?tab=vacaciones";
   }
   return "/asistencia?tab=vacaciones";
@@ -109,7 +143,7 @@ function mapApproverRow(n: UserNotificationRow): Notification {
     description: (n.body ?? "").trim() || "—",
     time: formatNotificationTime(createdAt),
     read: n.read_at != null,
-    link: linkForApproverUserNotification(n.kind),
+    link: linkForApproverUserNotification(n.kind, n.meta ?? null),
     source: "approver",
     createdAt,
   };

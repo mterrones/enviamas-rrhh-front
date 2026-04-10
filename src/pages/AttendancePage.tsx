@@ -293,6 +293,7 @@ export default function AttendancePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const mainTabParam = searchParams.get("tab");
   const mainTab: AttendanceMainTab = mainTabParam === "vacaciones" ? "vacaciones" : "calendario";
+  const employeeIdFromUrl = searchParams.get("employee_id");
 
   const setMainTab = useCallback(
     (value: string) => {
@@ -363,6 +364,14 @@ export default function AttendancePage() {
   const [fechaInicio, setFechaInicio] = useState<Date>();
   const [fechaFin, setFechaFin] = useState<Date>();
   const [motivo, setMotivo] = useState("");
+
+  useEffect(() => {
+    if (mainTab !== "vacaciones") return;
+    if (employeeIdFromUrl == null || employeeIdFromUrl === "") return;
+    const id = Number(employeeIdFromUrl);
+    if (Number.isNaN(id) || id <= 0) return;
+    setSelEmpleado(String(id));
+  }, [mainTab, employeeIdFromUrl]);
   const [hrVacBalance, setHrVacBalance] = useState<VacationBalanceData | null>(null);
   const [hrVacBalanceLoading, setHrVacBalanceLoading] = useState(false);
   const [hrVacBalanceError, setHrVacBalanceError] = useState<string | null>(null);

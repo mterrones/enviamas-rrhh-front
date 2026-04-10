@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -162,6 +163,8 @@ function formatNotificationDate(iso: string | null): string {
 const portalBankCatalog = ["BCP", "BBVA", "Interbank", "Scotiabank", "BanBif", "Caja Arequipa"];
 const portalPensionCatalog = ["AFP Integra", "AFP Prima", "AFP Profuturo", "AFP Habitat", "ONP"];
 
+const PORTAL_TAB_VALUES = new Set(["boletas", "asistencia", "solicitudes", "equipos", "datos", "notificaciones"]);
+
 function portalCatalogExtra(value: string, known: string[]) {
   if (!value || known.includes(value)) return null;
   return (
@@ -172,6 +175,7 @@ function portalCatalogExtra(value: string, known: string[]) {
 }
 
 export default function EmployeePortalPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
   const { user } = useAuth();
   const hasEmployee = Boolean(user?.employee);
@@ -183,6 +187,32 @@ export default function EmployeePortalPage() {
   const welcomeName = user?.nombre ?? "…";
 
   const [activeTab, setActiveTab] = useState("boletas");
+
+  const tabFromUrl = searchParams.get("tab");
+  useEffect(() => {
+    if (tabFromUrl && PORTAL_TAB_VALUES.has(tabFromUrl)) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [tabFromUrl]);
+
+  const handlePortalTabChange = useCallback(
+    (value: string) => {
+      setActiveTab(value);
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          if (value === "boletas") {
+            p.delete("tab");
+          } else {
+            p.set("tab", value);
+          }
+          return p;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const [payslipPage, setPayslipPage] = useState(1);
   const [payslips, setPayslips] = useState<PortalPayslip[]>([]);
@@ -884,7 +914,7 @@ export default function EmployeePortalPage() {
         )
       ) : null}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={handlePortalTabChange}>
         <TabsList className="bg-card border border-border">
           <TabsTrigger value="boletas" className="gap-1.5">
             <FileText className="w-4 h-4" />
