@@ -1,4 +1,5 @@
 import type { components } from "@/api/contracts";
+import type { AttendanceRecord } from "@/api/attendance";
 import { AGGREGATION_PAGE_SIZE } from "@/constants/pagination";
 import { apiRequest, buildApiUrl, ApiHttpError } from "@/api/client";
 import { getAuthToken } from "@/api/authToken";
@@ -277,6 +278,42 @@ export async function fetchAllPortalAttendanceInRange(params: { from: string; to
     out.push(...r.data);
   }
   return out;
+}
+
+export async function patchPortalAttendanceJustification(id: number, body: { justification: string }) {
+  return apiRequest<{ data: AttendanceRecord }>(`/portal/attendance/${id}`, {
+    method: "PATCH",
+    body,
+  });
+}
+
+export async function uploadPortalAttendanceJustificationFile(attendanceId: number, file: File) {
+  const fd = new FormData();
+  fd.append("file", file);
+  return apiRequest<{ data: AttendanceRecord }>(`/portal/attendance/${attendanceId}/justification`, {
+    method: "POST",
+    body: fd,
+  });
+}
+
+export async function downloadPortalAttendanceJustificationBlob(attendanceId: number): Promise<Blob> {
+  const headers = new Headers();
+  const token = getAuthToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const res = await fetch(buildApiUrl(`/portal/attendance/${attendanceId}/justification-file`), { headers });
+  if (!res.ok) {
+    const text = await res.text();
+    let parsed: unknown = text;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = { message: text || res.statusText };
+    }
+    throw new ApiHttpError(res.status, parsed);
+  }
+  return res.blob();
 }
 
 export async function createPortalVacationRequest(body: PortalVacationCreateBody) {

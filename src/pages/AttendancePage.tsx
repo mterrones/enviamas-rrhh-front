@@ -372,6 +372,14 @@ export default function AttendancePage() {
     if (Number.isNaN(id) || id <= 0) return;
     setSelEmpleado(String(id));
   }, [mainTab, employeeIdFromUrl]);
+
+  useEffect(() => {
+    if (mainTab === "vacaciones") return;
+    if (employeeIdFromUrl == null || employeeIdFromUrl === "") return;
+    const id = Number(employeeIdFromUrl);
+    if (Number.isNaN(id) || id <= 0) return;
+    setSelectedEmpleado(String(id));
+  }, [mainTab, employeeIdFromUrl]);
   const [hrVacBalance, setHrVacBalance] = useState<VacationBalanceData | null>(null);
   const [hrVacBalanceLoading, setHrVacBalanceLoading] = useState(false);
   const [hrVacBalanceError, setHrVacBalanceError] = useState<string | null>(null);

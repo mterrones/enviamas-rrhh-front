@@ -27,7 +27,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { ApiHttpError } from "@/api/client";
 import type { VacationRequest } from "@/api/vacationRequests";
 import type { AttendanceRecord } from "@/api/attendance";
-import { filterWeekdayAttendanceRecords } from "@/lib/weekendAttendance";
+import { filterWeekdayAttendanceRecords, isWeekendYmd, recordDateToIsoDay } from "@/lib/weekendAttendance";
 import {
   createPortalVacationRequest,
   createPortalResignationRequest,
@@ -36,9 +36,12 @@ import {
   patchPortalResignationRequest,
   patchPortalVacationRequest,
   downloadPortalAssetLoanActBlob,
+  downloadPortalAttendanceJustificationBlob,
   downloadPortalPayslipPdfBlob,
   downloadPortalResignationLetterBlob,
   fetchAllPortalAttendanceInRange,
+  patchPortalAttendanceJustification,
+  uploadPortalAttendanceJustificationFile,
   fetchPortalAssetsPage,
   fetchPortalContact,
   fetchPortalPayslipsPage,
@@ -57,7 +60,7 @@ import {
 } from "@/api/portal";
 import { DEFAULT_LIST_PAGE_SIZE } from "@/constants/pagination";
 import { FileText, Calendar as CalendarIcon, Bell, User, NotebookPen, Laptop, Download, Pencil, Trash2 } from "lucide-react";
-import { format, differenceInCalendarDays, startOfMonth, endOfMonth, parseISO } from "date-fns";
+import { addDays, format, differenceInCalendarDays, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { formatDecimalHoursAsDuration } from "@/lib/formatWorkedDuration";
 import { formatAppDate, formatAppDateTime, formatAppMonthYear } from "@/lib/formatAppDate";
@@ -129,6 +132,10 @@ function portalAttendanceStatusLabel(s: string): string {
   return PORTAL_ATT_STATUS[s] ?? s;
 }
 
+function portalCanJustifyStatus(s: string): boolean {
+  return s === "tardanza_nj" || s === "falta_nj" || s === "tardanza_j" || s === "falta_j";
+}
+
 const portalAssetEstadoVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   "En uso": "default",
   Asignado: "default",
@@ -165,6 +172,70 @@ const portalPensionCatalog = ["AFP Integra", "AFP Prima", "AFP Profuturo", "AFP 
 
 const PORTAL_TAB_VALUES = new Set(["boletas", "asistencia", "solicitudes", "equipos", "datos", "notificaciones"]);
 
+type PortalAttendanceRow = AttendanceRecord & {
+  check_in?: string | null;
+  check_out?: string | null;
+  hours_worked?: number | null;
+  justification?: string | null;
+  has_justification_file?: boolean;
+};
+
+const portalCalendarStatusColors: Record<string, string> = {
+  asistido: "bg-success",
+  recuperacion: "bg-info",
+  tardanza_j: "bg-success-dark",
+  tardanza_nj: "bg-warning",
+  falta_j: "bg-primary",
+  falta_nj: "bg-destructive",
+  vacaciones: "bg-purple",
+  __none__: "bg-muted",
+};
+
+const portalCalMeses = [
+  "Enero",
+  "Febrero",
+  "Marzo",
+  "Abril",
+  "Mayo",
+  "Junio",
+  "Julio",
+  "Agosto",
+  "Septiembre",
+  "Octubre",
+  "Noviembre",
+  "Diciembre",
+];
+
+const portalCalYears = Array.from({ length: 11 }, (_, i) => 2020 + i);
+
+function portalCalMonthDayCount(year: number, monthIndex0: number): number {
+  return new Date(year, monthIndex0 + 1, 0).getDate();
+}
+
+const portalCalFirstDayOffset = (year: number, monthIndex0: number) => new Date(year, monthIndex0, 1).getDay();
+
+const portalCalLegend: { status: string; label: string }[] = [
+  { status: "asistido", label: "Asistido" },
+  { status: "recuperacion", label: "Recuperación" },
+  { status: "tardanza_j", label: "Tard./Salida just." },
+  { status: "tardanza_nj", label: "Tardanza" },
+  { status: "falta_j", label: "Falta justificada" },
+  { status: "falta_nj", label: "Falta" },
+  { status: "vacaciones", label: "Vacaciones" },
+];
+
+const RESIGNATION_MIN_NOTICE_DAYS = 30;
+
+function resignationProposedMinIso(): string {
+  return format(addDays(new Date(), RESIGNATION_MIN_NOTICE_DAYS), "yyyy-MM-dd");
+}
+
+function isResignationProposedDateAllowed(isoYmd: string): boolean {
+  const t = isoYmd.trim();
+  if (!t) return true;
+  return t >= resignationProposedMinIso();
+}
+
 function portalCatalogExtra(value: string, known: string[]) {
   if (!value || known.includes(value)) return null;
   return (
@@ -185,8 +256,9 @@ export default function EmployeePortalPage() {
       ? "Sin datos: este portal muestra información de la ficha de empleado vinculada a tu usuario. Las cuentas administrativas no suelen tener ficha propia aquí."
       : "Sin datos hasta vincular tu ficha de empleado.";
   const welcomeName = user?.nombre ?? "…";
+  const hidePortalTabBar = user?.rol === "empleado";
 
-  const [activeTab, setActiveTab] = useState("boletas");
+  const [activeTab, setActiveTab] = useState("datos");
 
   const tabFromUrl = searchParams.get("tab");
   useEffect(() => {
@@ -201,7 +273,7 @@ export default function EmployeePortalPage() {
       setSearchParams(
         (prev) => {
           const p = new URLSearchParams(prev);
-          if (value === "boletas") {
+          if (value === "datos") {
             p.delete("tab");
           } else {
             p.set("tab", value);
@@ -256,9 +328,18 @@ export default function EmployeePortalPage() {
   const [vacationBalanceLoading, setVacationBalanceLoading] = useState(false);
   const [vacationBalanceError, setVacationBalanceError] = useState<string | null>(null);
 
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<PortalAttendanceRow[]>([]);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [attendanceError, setAttendanceError] = useState<string | null>(null);
+  const [portalAttYear, setPortalAttYear] = useState(() => new Date().getFullYear());
+  const [portalAttMonthIndex, setPortalAttMonthIndex] = useState(() => new Date().getMonth());
+  const [portalAttDayOpen, setPortalAttDayOpen] = useState(false);
+  const [portalAttDayRecord, setPortalAttDayRecord] = useState<PortalAttendanceRow | null>(null);
+  const [portalAttDayIso, setPortalAttDayIso] = useState<string | null>(null);
+  const [portalJustificationDraft, setPortalJustificationDraft] = useState("");
+  const [portalJustificationFile, setPortalJustificationFile] = useState<File | null>(null);
+  const [portalJustificationSaving, setPortalJustificationSaving] = useState(false);
+  const portalJustificationFileInputRef = useRef<HTMLInputElement>(null);
 
   const [showNuevaSolicitud, setShowNuevaSolicitud] = useState(false);
   const [editingVacationId, setEditingVacationId] = useState<number | null>(null);
@@ -317,13 +398,11 @@ export default function EmployeePortalPage() {
   const balanceYear = useMemo(() => new Date().getFullYear(), []);
 
   const attendancePeriod = useMemo(() => {
-    const now = new Date();
-    return {
-      from: format(startOfMonth(now), "yyyy-MM-dd"),
-      to: format(endOfMonth(now), "yyyy-MM-dd"),
-      title: formatAppMonthYear(now.getMonth() + 1, now.getFullYear()),
-    };
-  }, [activeTab]);
+    const from = format(new Date(portalAttYear, portalAttMonthIndex, 1), "yyyy-MM-dd");
+    const to = format(new Date(portalAttYear, portalAttMonthIndex + 1, 0), "yyyy-MM-dd");
+    const title = formatAppMonthYear(portalAttMonthIndex + 1, portalAttYear);
+    return { from, to, title };
+  }, [portalAttYear, portalAttMonthIndex]);
 
   const diasCalculados =
     fechaInicio && fechaFin ? Math.max(differenceInCalendarDays(fechaFin, fechaInicio) + 1, 0) : 0;
@@ -357,6 +436,27 @@ export default function EmployeePortalPage() {
     }
     return { asistidos, faltas, tardanzas, otros };
   }, [attendanceRecords]);
+
+  const portalCalDays = useMemo(() => {
+    const y = portalAttYear;
+    const m = portalAttMonthIndex;
+    const total = portalCalMonthDayCount(y, m);
+    const map = new Map<string, string>();
+    for (const r of attendanceRecords) {
+      map.set(recordDateToIsoDay(r), r.status);
+    }
+    return Array.from({ length: total }, (_, i) => {
+      const day = i + 1;
+      const iso = format(new Date(y, m, day), "yyyy-MM-dd");
+      const statusSt = map.get(iso) ?? "__none__";
+      return { day, status: statusSt };
+    });
+  }, [attendanceRecords, portalAttYear, portalAttMonthIndex]);
+
+  const portalCalFirstBlank = useMemo(
+    () => portalCalFirstDayOffset(portalAttYear, portalAttMonthIndex),
+    [portalAttYear, portalAttMonthIndex],
+  );
 
   const loadPayslips = useCallback(async () => {
     if (!hasEmployee) {
@@ -471,7 +571,7 @@ export default function EmployeePortalPage() {
         from: attendancePeriod.from,
         to: attendancePeriod.to,
       });
-      setAttendanceRecords(filterWeekdayAttendanceRecords(rows));
+      setAttendanceRecords(filterWeekdayAttendanceRecords(rows) as PortalAttendanceRow[]);
     } catch (e) {
       setAttendanceError(requestErrorMessage(e));
       setAttendanceRecords([]);
@@ -479,6 +579,88 @@ export default function EmployeePortalPage() {
       setAttendanceLoading(false);
     }
   }, [hasEmployee, attendancePeriod.from, attendancePeriod.to]);
+
+  const openPortalAttendanceDay = useCallback((iso: string, record: PortalAttendanceRow | null) => {
+    setPortalAttDayIso(iso);
+    setPortalAttDayRecord(record);
+    setPortalJustificationDraft(
+      record?.justification && String(record.justification).trim() ? String(record.justification) : "",
+    );
+    setPortalJustificationFile(null);
+    setPortalAttDayOpen(true);
+    requestAnimationFrame(() => {
+      if (portalJustificationFileInputRef.current) {
+        portalJustificationFileInputRef.current.value = "";
+      }
+    });
+  }, []);
+
+  const handlePortalCalendarDayClick = useCallback(
+    (day: number) => {
+      if (attendanceLoading) return;
+      const y = portalAttYear;
+      const mo = portalAttMonthIndex;
+      if (isWeekendYmd(y, mo, day)) {
+        toast({
+          title: "Día no laborable",
+          description: "Sábado y domingo no tienen registro de asistencia laborable.",
+        });
+        return;
+      }
+      const iso = format(new Date(y, mo, day), "yyyy-MM-dd");
+      const rec =
+        (attendanceRecords.find((r) => recordDateToIsoDay(r) === iso) as PortalAttendanceRow | undefined) ?? null;
+      openPortalAttendanceDay(iso, rec);
+    },
+    [attendanceLoading, portalAttYear, portalAttMonthIndex, attendanceRecords, openPortalAttendanceDay, toast],
+  );
+
+  const submitPortalJustification = useCallback(async () => {
+    if (!portalAttDayRecord) return;
+    const id = portalAttDayRecord.id;
+    const text = portalJustificationDraft.trim();
+    const file = portalJustificationFile;
+    if (!text && !file) {
+      toast({
+        title: "Datos incompletos",
+        description: "Escribe el motivo de la justificación o adjunta un archivo (PDF o imagen, máx. 5 MB).",
+        variant: "destructive",
+      });
+      return;
+    }
+    setPortalJustificationSaving(true);
+    try {
+      if (text) {
+        await patchPortalAttendanceJustification(id, { justification: text });
+      }
+      if (file) {
+        await uploadPortalAttendanceJustificationFile(id, file);
+      }
+      toast({ title: "Justificación registrada", description: "Se actualizó tu registro de asistencia." });
+      setPortalAttDayOpen(false);
+      await loadAttendance();
+    } catch (e) {
+      const msg = e instanceof ApiHttpError ? e.apiError?.message ?? e.message : "No se pudo guardar";
+      toast({ title: "Error", description: typeof msg === "string" ? msg : "Intenta de nuevo", variant: "destructive" });
+    } finally {
+      setPortalJustificationSaving(false);
+    }
+  }, [portalAttDayRecord, portalJustificationDraft, portalJustificationFile, toast, loadAttendance]);
+
+  const handlePortalDownloadJustification = useCallback(async () => {
+    if (!portalAttDayRecord?.has_justification_file) return;
+    try {
+      const blob = await downloadPortalAttendanceJustificationBlob(portalAttDayRecord.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `justificacion-asistencia-${portalAttDayRecord.id}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast({ title: "Error", description: "No se pudo descargar el archivo.", variant: "destructive" });
+    }
+  }, [portalAttDayRecord, toast]);
 
   useEffect(() => {
     if (activeTab === "boletas") void loadPayslips();
@@ -634,12 +816,21 @@ export default function EmployeePortalPage() {
       toast({ title: "Adjunta la carta", description: "Se requiere un archivo PDF.", variant: "destructive" });
       return;
     }
+    const proposed = proposedResignationDate.trim();
+    if (proposed && !isResignationProposedDateAllowed(proposed)) {
+      toast({
+        title: "Preaviso insuficiente",
+        description: `El último día laborable debe ser al menos ${RESIGNATION_MIN_NOTICE_DAYS} días después de hoy.`,
+        variant: "destructive",
+      });
+      return;
+    }
     setSubmittingResignation(true);
     try {
       const fd = new FormData();
       fd.set("file", file);
-      if (proposedResignationDate.trim()) {
-        fd.set("proposed_effective_date", proposedResignationDate.trim());
+      if (proposed) {
+        fd.set("proposed_effective_date", proposed);
       }
       if (resignationNotesText.trim()) {
         fd.set("notes", resignationNotesText.trim());
@@ -850,17 +1041,27 @@ export default function EmployeePortalPage() {
 
   const openResignationEdit = (r: PortalResignationRequest) => {
     setResignationEditRow(r);
-    setResignationEditDate(r.proposed_effective_date?.slice(0, 10) ?? "");
+    const raw = r.proposed_effective_date?.slice(0, 10) ?? "";
+    const minIso = resignationProposedMinIso();
+    setResignationEditDate(raw && raw >= minIso ? raw : "");
     setResignationEditNotes(r.notes ?? "");
   };
 
   const handleSaveResignationEdit = async () => {
     if (!resignationEditRow) return;
+    const d = resignationEditDate.trim();
+    if (d && !isResignationProposedDateAllowed(d)) {
+      toast({
+        title: "Preaviso insuficiente",
+        description: `El último día laborable debe ser al menos ${RESIGNATION_MIN_NOTICE_DAYS} días después de hoy.`,
+        variant: "destructive",
+      });
+      return;
+    }
     setResignationEditSaving(true);
     try {
       const fd = new FormData();
       fd.set("notes", resignationEditNotes);
-      const d = resignationEditDate.trim();
       if (d) fd.set("proposed_effective_date", d);
       const file = resignationEditFileRef.current?.files?.[0];
       if (file) fd.set("file", file);
@@ -915,573 +1116,34 @@ export default function EmployeePortalPage() {
       ) : null}
 
       <Tabs value={activeTab} onValueChange={handlePortalTabChange}>
-        <TabsList className="bg-card border border-border">
-          <TabsTrigger value="boletas" className="gap-1.5">
-            <FileText className="w-4 h-4" />
-            Mis Boletas
-          </TabsTrigger>
-          <TabsTrigger value="asistencia" className="gap-1.5">
-            <CalendarIcon className="w-4 h-4" />
-            Mis Asistencias
-          </TabsTrigger>
-          <TabsTrigger value="solicitudes" className="gap-1.5">
-            <User className="w-4 h-4" />
-            Mis Solicitudes
-          </TabsTrigger>
-          <TabsTrigger value="equipos" className="gap-1.5">
-            <Laptop className="w-4 h-4" />
-            Mis equipos
-          </TabsTrigger>
-          <TabsTrigger value="datos" className="gap-1.5">
-            <NotebookPen className="w-4 h-4" />
-            Datos
-          </TabsTrigger>
-          <TabsTrigger value="notificaciones" className="gap-1.5">
-            <Bell className="w-4 h-4" />
-            Notificaciones
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="boletas" className="mt-4">
-          <Card className="shadow-card">
-            <CardHeader>
-              <CardTitle className="text-base">Mis Boletas de Pago</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {payslipLoading ? (
-                <p className="text-sm text-muted-foreground px-5 py-8">Cargando…</p>
-              ) : payslipError ? (
-                <div className="px-5 py-8 space-y-3">
-                  <p className="text-sm text-destructive">{payslipError}</p>
-                  <Button size="sm" variant="outline" type="button" onClick={() => loadPayslips()}>
-                    Reintentar
-                  </Button>
-                </div>
-              ) : !hasEmployee ? (
-                <p className="text-sm text-muted-foreground px-5 py-8">{emptyStateNoEmployeeMessage}</p>
-              ) : payslips.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-5 py-8">No hay boletas registradas para tu ficha.</p>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Periodo</th>
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Neto</th>
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Estado</th>
-                      <th className="text-right text-xs font-semibold text-muted-foreground px-5 py-3 w-[1%]">PDF</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payslips.map(b => (
-                      <tr key={b.id} className="border-b border-border last:border-0">
-                        <td className="px-5 py-3 text-sm font-medium">{payslipPeriodLabel(b)}</td>
-                        <td className="px-5 py-3 text-sm">{formatPen(b.net_amount)}</td>
-                        <td className="px-5 py-3">
-                          <Badge
-                            variant={b.status === "aprobada" ? "default" : "secondary"}
-                            className={
-                              b.status === "aprobada"
-                                ? "text-xs bg-emerald-600 hover:bg-emerald-600 text-white border-transparent"
-                                : "text-xs"
-                            }
-                          >
-                            {payslipStatusLabel(b.status)}
-                          </Badge>
-                        </td>
-                        <td className="px-5 py-3 text-right whitespace-nowrap">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs text-primary gap-1 h-8 px-2"
-                            type="button"
-                            disabled={b.status !== "aprobada" || payslipPdfDownloadingId === b.id}
-                            title="Descargar boleta en PDF"
-                            onClick={() => void handleDownloadPayslipPdf(b)}
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            {payslipPdfDownloadingId === b.id ? "Descargando…" : "Descargar"}
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              {!payslipLoading && !payslipError && hasEmployee && payslipMeta.total > 0 ? (
-                <ListPaginationBar
-                  page={payslipMeta.current_page}
-                  lastPage={payslipMeta.last_page}
-                  total={payslipMeta.total}
-                  pageSize={payslipMeta.per_page}
-                  loading={payslipLoading}
-                  onPageChange={setPayslipPage}
-                />
-              ) : null}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="asistencia" className="mt-4">
-          <Card className="shadow-card">
-            <CardHeader>
-              <CardTitle className="text-base">Mi Asistencia — {attendancePeriod.title}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {attendanceLoading ? (
-                <p className="text-sm text-muted-foreground">Cargando…</p>
-              ) : attendanceError ? (
-                <div className="space-y-3">
-                  <p className="text-sm text-destructive">{attendanceError}</p>
-                  <Button size="sm" variant="outline" type="button" onClick={() => loadAttendance()}>
-                    Reintentar
-                  </Button>
-                </div>
-              ) : !hasEmployee ? (
-                <p className="text-sm text-muted-foreground">{emptyStateNoEmployeeMessage}</p>
-              ) : (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    Resumen según registros del sistema para el mes en curso (no incluye horas extra ni conceptos no
-                    modelados en asistencia).
-                  </p>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                    {(
-                      [
-                        ["Días asistidos", String(attendanceStats.asistidos)],
-                        ["Faltas", String(attendanceStats.faltas)],
-                        ["Tardanzas", String(attendanceStats.tardanzas)],
-                        ["Otros registros", String(attendanceStats.otros)],
-                      ] as const
-                    ).map(([l, v]) => (
-                      <div key={l} className="text-center p-3 bg-muted rounded-lg">
-                        <p className="text-2xl font-bold">{v}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{l}</p>
-                      </div>
-                    ))}
-                  </div>
-                  {attendanceRecords.length > 0 ? (
-                    <div className="mt-6 border-t border-border pt-4 overflow-x-auto">
-                      <p className="text-sm font-medium mb-2">Registros del mes</p>
-                      <table className="w-full text-xs min-w-[480px]">
-                        <thead>
-                          <tr className="border-b border-border bg-muted/50">
-                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Fecha</th>
-                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Estado</th>
-                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Entrada</th>
-                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Salida</th>
-                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Horas</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {attendanceRecords
-                            .slice()
-                            .sort((a, b) => a.record_date.localeCompare(b.record_date))
-                            .map((r) => (
-                              <tr key={r.id} className="border-b border-border last:border-0">
-                                <td className="px-2 py-2 tabular-nums">{formatAppDate(r.record_date)}</td>
-                                <td className="px-2 py-2">{portalAttendanceStatusLabel(r.status)}</td>
-                                <td className="px-2 py-2 tabular-nums">{r.check_in ?? "—"}</td>
-                                <td className="px-2 py-2 tabular-nums">{r.check_out ?? "—"}</td>
-                                <td className="px-2 py-2 tabular-nums">
-                                  {formatDecimalHoursAsDuration(r.hours_worked)}
-                                </td>
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground mt-4">No hay registros de asistencia en el mes.</p>
-                  )}
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="solicitudes" className="mt-4">
-          <Card className="shadow-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-base">Mis Solicitudes</CardTitle>
-              <Button
-                size="sm"
-                className="gap-1.5"
-                onClick={() => {
-                  resetVacationForm();
-                  setShowNuevaSolicitud(true);
-                }}
-                disabled={!hasEmployee}
-              >
-                Nueva solicitud
-              </Button>
-            </CardHeader>
-            {hasEmployee ? (
-              <div className="px-5 py-3 border-b border-border bg-muted/20 text-sm space-y-1">
-                {vacationBalanceLoading ? (
-                  <p className="text-muted-foreground">Cargando saldo de vacaciones…</p>
-                ) : vacationBalanceError ? (
-                  <div className="space-y-2">
-                    <p className="text-destructive text-xs">{vacationBalanceError}</p>
-                    <Button size="sm" variant="outline" type="button" onClick={() => loadVacationBalance()}>
-                      Reintentar
-                    </Button>
-                  </div>
-                ) : vacationBalance ? (
-                  <>
-                    <p className="font-medium">Saldo de vacaciones ({vacationBalance.year})</p>
-                    <p className="text-xs text-muted-foreground">
-                      Tope anual: {vacationBalance.annual_days} · Usados (aprobados): {vacationBalance.days_used} ·
-                      Pendientes: {vacationBalance.days_pending} · Disponibles: {vacationBalance.days_available}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Cálculo por año calendario; sin arrastre de saldos entre años en esta versión.
-                    </p>
-                  </>
-                ) : null}
-              </div>
-            ) : null}
-            <CardContent className="p-0">
-              {vacationLoading ? (
-                <p className="text-sm text-muted-foreground px-5 py-8">Cargando…</p>
-              ) : vacationError ? (
-                <div className="px-5 py-8 space-y-3">
-                  <p className="text-sm text-destructive">{vacationError}</p>
-                  <Button size="sm" variant="outline" type="button" onClick={() => loadVacations()}>
-                    Reintentar
-                  </Button>
-                </div>
-              ) : !hasEmployee ? (
-                <p className="text-sm text-muted-foreground px-5 py-8">{emptyStateNoEmployeeMessage}</p>
-              ) : vacations.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-5 py-8">No hay solicitudes de vacaciones registradas.</p>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Tipo</th>
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Fechas</th>
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Estado</th>
-                      <th className="text-right text-xs font-semibold text-muted-foreground px-5 py-3 w-[1%]">
-                        Acciones
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {vacations.map(v => (
-                      <tr key={v.id} className="border-b border-border last:border-0">
-                        <td className="px-5 py-3 text-sm font-medium">Vacaciones</td>
-                        <td className="px-5 py-3 text-sm">
-                          {formatAppDate(v.start_date)} — {formatAppDate(v.end_date)} ({v.days} días)
-                        </td>
-                        <td className="px-5 py-3">
-                          <Badge variant={vacationStatusBadgeVariant(v.status)} className="text-xs">
-                            {vacationStatusLabel(v.status)}
-                          </Badge>
-                        </td>
-                        <td className="px-5 py-3 text-right whitespace-nowrap">
-                          {v.status === "pendiente" ? (
-                            <div className="inline-flex gap-1 justify-end">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title="Editar"
-                                onClick={() => openEditVacation(v)}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-destructive hover:text-destructive"
-                                title="Eliminar"
-                                onClick={() => setVacationToDeleteId(v.id)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              {!vacationLoading && !vacationError && hasEmployee && vacationMeta.total > 0 ? (
-                <ListPaginationBar
-                  page={vacationMeta.current_page}
-                  lastPage={vacationMeta.last_page}
-                  total={vacationMeta.total}
-                  pageSize={vacationMeta.per_page}
-                  loading={vacationLoading}
-                  onPageChange={setVacationPage}
-                />
-              ) : null}
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-card mt-4">
-            <CardHeader>
-              <CardTitle className="text-base">Renuncia / cese laboral</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Puedes adjuntar tu carta de renuncia en PDF. Recursos Humanos revisará la solicitud; la desvinculación
-                formal (cese en planilla, liquidación, etc.) se gestiona aparte cuando RRHH lo confirme en el sistema.
-              </p>
-              {!hasEmployee ? (
-                <p className="text-sm text-muted-foreground">{emptyStateNoEmployeeMessage}</p>
-              ) : (
-                <>
-                  {hasPendingResignation ? (
-                    <p className="text-sm text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800 rounded-md px-3 py-2">
-                      Tienes una solicitud de renuncia pendiente de revisión por RRHH. Puedes editarla o anularla desde
-                      el historial si necesitas corregir algo; no puedes enviar otra nueva hasta que sea resuelta.
-                    </p>
-                  ) : (
-                    <div className="space-y-3 max-w-lg">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="resignation-pdf">Carta de renuncia (PDF, máx. 5 MB)</Label>
-                        <Input
-                          id="resignation-pdf"
-                          ref={resignationFileInputRef}
-                          type="file"
-                          accept=".pdf,application/pdf"
-                          className="cursor-pointer"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="resignation-date">Fecha propuesta de último día laborable (opcional)</Label>
-                        <Input
-                          id="resignation-date"
-                          type="date"
-                          value={proposedResignationDate}
-                          onChange={e => setProposedResignationDate(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="resignation-notes">Comentario para RRHH (opcional)</Label>
-                        <Textarea
-                          id="resignation-notes"
-                          value={resignationNotesText}
-                          onChange={e => setResignationNotesText(e.target.value)}
-                          rows={3}
-                          placeholder="Ej. motivo breve, periodo de preaviso…"
-                        />
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={submittingResignation}
-                        onClick={() => void handleSubmitResignation()}
-                      >
-                        {submittingResignation ? "Enviando…" : "Enviar carta"}
-                      </Button>
-                    </div>
-                  )}
-
-                  {resignationLoading ? (
-                    <p className="text-sm text-muted-foreground">Cargando historial de renuncias…</p>
-                  ) : resignationError ? (
-                    <div className="space-y-2">
-                      <p className="text-sm text-destructive">{resignationError}</p>
-                      <Button size="sm" variant="outline" type="button" onClick={() => void loadResignations()}>
-                        Reintentar
-                      </Button>
-                    </div>
-                  ) : resignations.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Aún no registras solicitudes de renuncia enviadas.</p>
-                  ) : (
-                    <div className="border border-border rounded-lg overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-border bg-muted/50">
-                            <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">
-                              Fecha propuesta
-                            </th>
-                            <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Estado</th>
-                            <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Detalle</th>
-                            <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-[1%]">
-                              Acciones
-                            </th>
-                            <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-[1%]">
-                              Carta
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {resignations.map(r => (
-                            <tr key={r.id} className="border-b border-border last:border-0">
-                              <td className="px-3 py-2 tabular-nums">
-                                {r.proposed_effective_date != null ? formatAppDate(r.proposed_effective_date) : "—"}
-                              </td>
-                              <td className="px-3 py-2">
-                                <Badge
-                                  variant={resignationStatusBadgeVariant(r.status)}
-                                  className={
-                                    r.status === "aprobada"
-                                      ? "text-xs bg-emerald-600 hover:bg-emerald-600 text-white border-transparent"
-                                      : "text-xs"
-                                  }
-                                >
-                                  {resignationStatusLabel(r.status)}
-                                </Badge>
-                              </td>
-                              <td className="px-3 py-2 text-xs text-muted-foreground max-w-[200px]">
-                                {r.status === "rechazada" && r.rejection_reason ? (
-                                  <span className="line-clamp-2">{r.rejection_reason}</span>
-                                ) : r.notes ? (
-                                  <span className="line-clamp-2">{r.notes}</span>
-                                ) : (
-                                  "—"
-                                )}
-                              </td>
-                              <td className="px-3 py-2 text-right whitespace-nowrap">
-                                {r.status === "pendiente" ? (
-                                  <div className="inline-flex gap-1 justify-end">
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8"
-                                      title="Editar"
-                                      onClick={() => openResignationEdit(r)}
-                                    >
-                                      <Pencil className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8 text-destructive hover:text-destructive"
-                                      title="Eliminar"
-                                      onClick={() => setResignationToDeleteId(r.id)}
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">—</span>
-                                )}
-                              </td>
-                              <td className="px-3 py-2 text-right whitespace-nowrap">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="text-xs text-primary gap-1 h-8 px-2"
-                                  disabled={resignationLetterDownloadingId === r.id}
-                                  onClick={() => void handleDownloadPortalResignationLetter(r)}
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                  {resignationLetterDownloadingId === r.id ? "…" : "PDF"}
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  {!resignationLoading && !resignationError && hasEmployee && resignationMeta.total > 0 ? (
-                    <ListPaginationBar
-                      page={resignationMeta.current_page}
-                      lastPage={resignationMeta.last_page}
-                      total={resignationMeta.total}
-                      pageSize={resignationMeta.per_page}
-                      loading={resignationLoading}
-                      onPageChange={setResignationPage}
-                    />
-                  ) : null}
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="equipos" className="mt-4">
-          <Card className="shadow-card">
-            <CardHeader>
-              <CardTitle className="text-base">Equipos y activos en préstamo</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {portalAssetsLoading ? (
-                <p className="text-sm text-muted-foreground px-5 py-8">Cargando…</p>
-              ) : portalAssetsError ? (
-                <div className="px-5 py-8 space-y-3">
-                  <p className="text-sm text-destructive">{portalAssetsError}</p>
-                  <Button size="sm" variant="outline" type="button" onClick={() => void loadPortalAssets()}>
-                    Reintentar
-                  </Button>
-                </div>
-              ) : !hasEmployee ? (
-                <p className="text-sm text-muted-foreground px-5 py-8">{emptyStateNoEmployeeMessage}</p>
-              ) : portalAssets.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-5 py-8">
-                  No tienes equipos o activos asignados en préstamo en este momento.
-                </p>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Tipo</th>
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Descripción</th>
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Asignación</th>
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Estado</th>
-                      <th className="text-right text-xs font-semibold text-muted-foreground px-5 py-3 w-[1%]">Acta</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {portalAssets.map(a => (
-                      <tr key={a.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                        <td className="px-5 py-3 text-sm font-medium">{a.type}</td>
-                        <td className="px-5 py-3 text-sm">{portalAssetDescription(a)}</td>
-                        <td className="px-5 py-3 text-sm text-muted-foreground">
-                          {formatPortalAssetAssignedDate(a.assigned_at)}
-                        </td>
-                        <td className="px-5 py-3">
-                          <Badge variant={portalAssetEstadoVariant[a.status] ?? "secondary"} className="text-xs">
-                            {a.status}
-                          </Badge>
-                        </td>
-                        <td className="px-5 py-3 text-right whitespace-nowrap">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs text-primary gap-1 h-8 px-2"
-                            type="button"
-                            disabled={!a.has_loan_act || portalLoanActDownloadingId === a.id}
-                            title={
-                              a.has_loan_act ? "Descargar acta de préstamo (PDF)" : "No hay acta de préstamo cargada"
-                            }
-                            onClick={() => void handleDownloadPortalLoanAct(a)}
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            {portalLoanActDownloadingId === a.id ? "Descargando…" : "PDF"}
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              {!portalAssetsLoading && !portalAssetsError && hasEmployee && portalAssetsMeta.total > 0 ? (
-                <ListPaginationBar
-                  page={portalAssetsMeta.current_page}
-                  lastPage={portalAssetsMeta.last_page}
-                  total={portalAssetsMeta.total}
-                  pageSize={portalAssetsMeta.per_page}
-                  loading={portalAssetsLoading}
-                  onPageChange={setAssetsPage}
-                />
-              ) : null}
-            </CardContent>
-          </Card>
-        </TabsContent>
+        {!hidePortalTabBar ? (
+          <TabsList className="bg-card border border-border">
+            <TabsTrigger value="datos" className="gap-1.5">
+              <NotebookPen className="w-4 h-4" />
+              Datos
+            </TabsTrigger>
+            <TabsTrigger value="asistencia" className="gap-1.5">
+              <CalendarIcon className="w-4 h-4" />
+              Mis Asistencias
+            </TabsTrigger>
+            <TabsTrigger value="boletas" className="gap-1.5">
+              <FileText className="w-4 h-4" />
+              Mis Boletas
+            </TabsTrigger>
+            <TabsTrigger value="equipos" className="gap-1.5">
+              <Laptop className="w-4 h-4" />
+              Mis Equipos
+            </TabsTrigger>
+            <TabsTrigger value="solicitudes" className="gap-1.5">
+              <User className="w-4 h-4" />
+              Mis Solicitudes
+            </TabsTrigger>
+            <TabsTrigger value="notificaciones" className="gap-1.5">
+              <Bell className="w-4 h-4" />
+              Notificaciones
+            </TabsTrigger>
+          </TabsList>
+        ) : null}
 
         <TabsContent value="datos" className="mt-4 space-y-6 max-w-3xl">
           {contactLoading ? (
@@ -1628,6 +1290,668 @@ export default function EmployeePortalPage() {
           )}
         </TabsContent>
 
+        <TabsContent value="asistencia" className="mt-4">
+          <Card className="shadow-card">
+            <CardHeader>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle className="text-base">Mi Asistencia — {attendancePeriod.title}</CardTitle>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <Select
+                    value={String(portalAttYear)}
+                    onValueChange={(v) => setPortalAttYear(Number(v))}
+                    disabled={!hasEmployee || attendanceLoading}
+                  >
+                    <SelectTrigger className="w-[7.5rem]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {portalCalYears.map((y) => (
+                        <SelectItem key={y} value={String(y)}>
+                          {y}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={String(portalAttMonthIndex)}
+                    onValueChange={(v) => setPortalAttMonthIndex(Number(v))}
+                    disabled={!hasEmployee || attendanceLoading}
+                  >
+                    <SelectTrigger className="w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {portalCalMeses.map((m, i) => (
+                        <SelectItem key={m} value={String(i)}>
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {attendanceLoading ? (
+                <p className="text-sm text-muted-foreground">Cargando…</p>
+              ) : attendanceError ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-destructive">{attendanceError}</p>
+                  <Button size="sm" variant="outline" type="button" onClick={() => loadAttendance()}>
+                    Reintentar
+                  </Button>
+                </div>
+              ) : !hasEmployee ? (
+                <p className="text-sm text-muted-foreground">{emptyStateNoEmployeeMessage}</p>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Resumen según registros del sistema para el mes seleccionado (no incluye horas extra ni conceptos no
+                    modelados en asistencia).
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                    {(
+                      [
+                        ["Días asistidos", String(attendanceStats.asistidos)],
+                        ["Faltas", String(attendanceStats.faltas)],
+                        ["Tardanzas", String(attendanceStats.tardanzas)],
+                        ["Otros registros", String(attendanceStats.otros)],
+                      ] as const
+                    ).map(([l, v]) => (
+                      <div key={l} className="text-center p-3 bg-muted rounded-lg">
+                        <p className="text-2xl font-bold">{v}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{l}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-6 space-y-3 border-t border-border pt-4">
+                    <p className="text-sm font-medium">Calendario del mes</p>
+                    <div className="grid grid-cols-7 gap-1.5">
+                      {["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"].map((d, i) => (
+                        <div
+                          key={d}
+                          className={cn(
+                            "text-xs font-semibold text-center py-1",
+                            i === 0 || i === 6 ? "text-zinc-500 dark:text-zinc-400" : "text-muted-foreground",
+                          )}
+                        >
+                          {d}
+                        </div>
+                      ))}
+                      {Array.from({ length: portalCalFirstBlank }).map((_, i) => (
+                        <div key={`blank-${i}`} />
+                      ))}
+                      {portalCalDays.map(({ day, status }) => {
+                        const isWeekendCell = isWeekendYmd(portalAttYear, portalAttMonthIndex, day);
+                        const empty = status === "__none__";
+                        const cls = portalCalendarStatusColors[status] ?? "bg-muted";
+                        const cellClass = cn(
+                          "aspect-square rounded-md flex items-center justify-center text-xs font-medium min-w-0 w-full",
+                          isWeekendCell
+                            ? "bg-zinc-600 text-zinc-100 dark:bg-zinc-800 dark:text-zinc-200 pointer-events-none select-none"
+                            : cls,
+                          !isWeekendCell && (empty ? "text-muted-foreground" : "text-primary-foreground"),
+                        );
+                        if (isWeekendCell) {
+                          return (
+                            <div key={day} className={cellClass} title="Día no laborable (fin de semana)">
+                              {day}
+                            </div>
+                          );
+                        }
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            disabled={attendanceLoading}
+                            title={empty ? "Sin registro — ver detalle" : "Ver detalle del día"}
+                            className={cn(
+                              cellClass,
+                              !attendanceLoading &&
+                                "cursor-pointer hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                              attendanceLoading && "cursor-wait opacity-70",
+                            )}
+                            onClick={() => handlePortalCalendarDayClick(day)}
+                          >
+                            {day}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap gap-3 text-xs">
+                      {portalCalLegend.map((item) => (
+                        <span key={item.status} className="flex items-center gap-1.5">
+                          <span
+                            className={cn(
+                              "w-3 h-3 rounded shrink-0",
+                              portalCalendarStatusColors[item.status] ?? "bg-muted",
+                            )}
+                          />
+                          {item.label}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Clic en un día laborable para ver entrada, salida y horas. Puedes justificar tardanzas y faltas con
+                      comentario o archivo adjunto.
+                    </p>
+                  </div>
+                  {attendanceRecords.length > 0 ? (
+                    <div className="mt-6 border-t border-border pt-4 overflow-x-auto">
+                      <p className="text-sm font-medium mb-2">Registros del mes</p>
+                      <table className="w-full text-xs min-w-[480px]">
+                        <thead>
+                          <tr className="border-b border-border bg-muted/50">
+                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Fecha</th>
+                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Estado</th>
+                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Entrada</th>
+                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Salida</th>
+                            <th className="text-left font-semibold text-muted-foreground px-2 py-2">Horas</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {attendanceRecords
+                            .slice()
+                            .sort((a, b) => a.record_date.localeCompare(b.record_date))
+                            .map((r) => (
+                              <tr key={r.id} className="border-b border-border last:border-0">
+                                <td className="px-2 py-2 tabular-nums">{formatAppDate(r.record_date)}</td>
+                                <td className="px-2 py-2">{portalAttendanceStatusLabel(r.status)}</td>
+                                <td className="px-2 py-2 tabular-nums">{r.check_in ?? "—"}</td>
+                                <td className="px-2 py-2 tabular-nums">{r.check_out ?? "—"}</td>
+                                <td className="px-2 py-2 tabular-nums">
+                                  {formatDecimalHoursAsDuration(r.hours_worked)}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground mt-6 border-t border-border pt-4">
+                      No hay registros de asistencia en el mes.
+                    </p>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="boletas" className="mt-4">
+          <Card className="shadow-card">
+            <CardHeader>
+              <CardTitle className="text-base">Mis Boletas de Pago</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {payslipLoading ? (
+                <p className="text-sm text-muted-foreground px-5 py-8">Cargando…</p>
+              ) : payslipError ? (
+                <div className="px-5 py-8 space-y-3">
+                  <p className="text-sm text-destructive">{payslipError}</p>
+                  <Button size="sm" variant="outline" type="button" onClick={() => loadPayslips()}>
+                    Reintentar
+                  </Button>
+                </div>
+              ) : !hasEmployee ? (
+                <p className="text-sm text-muted-foreground px-5 py-8">{emptyStateNoEmployeeMessage}</p>
+              ) : payslips.length === 0 ? (
+                <p className="text-sm text-muted-foreground px-5 py-8">No hay boletas registradas para tu ficha.</p>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/50">
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Periodo</th>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Neto</th>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Estado</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-5 py-3 w-[1%]">PDF</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payslips.map(b => (
+                      <tr key={b.id} className="border-b border-border last:border-0">
+                        <td className="px-5 py-3 text-sm font-medium">{payslipPeriodLabel(b)}</td>
+                        <td className="px-5 py-3 text-sm">{formatPen(b.net_amount)}</td>
+                        <td className="px-5 py-3">
+                          <Badge
+                            variant={b.status === "aprobada" ? "default" : "secondary"}
+                            className={
+                              b.status === "aprobada"
+                                ? "text-xs bg-emerald-600 hover:bg-emerald-600 text-white border-transparent"
+                                : "text-xs"
+                            }
+                          >
+                            {payslipStatusLabel(b.status)}
+                          </Badge>
+                        </td>
+                        <td className="px-5 py-3 text-right whitespace-nowrap">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs text-primary gap-1 h-8 px-2"
+                            type="button"
+                            disabled={b.status !== "aprobada" || payslipPdfDownloadingId === b.id}
+                            title="Descargar boleta en PDF"
+                            onClick={() => void handleDownloadPayslipPdf(b)}
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            {payslipPdfDownloadingId === b.id ? "Descargando…" : "Descargar"}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {!payslipLoading && !payslipError && hasEmployee && payslipMeta.total > 0 ? (
+                <ListPaginationBar
+                  page={payslipMeta.current_page}
+                  lastPage={payslipMeta.last_page}
+                  total={payslipMeta.total}
+                  pageSize={payslipMeta.per_page}
+                  loading={payslipLoading}
+                  onPageChange={setPayslipPage}
+                />
+              ) : null}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="equipos" className="mt-4">
+          <Card className="shadow-card">
+            <CardHeader>
+              <CardTitle className="text-base">Equipos y activos en préstamo</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {portalAssetsLoading ? (
+                <p className="text-sm text-muted-foreground px-5 py-8">Cargando…</p>
+              ) : portalAssetsError ? (
+                <div className="px-5 py-8 space-y-3">
+                  <p className="text-sm text-destructive">{portalAssetsError}</p>
+                  <Button size="sm" variant="outline" type="button" onClick={() => void loadPortalAssets()}>
+                    Reintentar
+                  </Button>
+                </div>
+              ) : !hasEmployee ? (
+                <p className="text-sm text-muted-foreground px-5 py-8">{emptyStateNoEmployeeMessage}</p>
+              ) : portalAssets.length === 0 ? (
+                <p className="text-sm text-muted-foreground px-5 py-8">
+                  No tienes equipos o activos asignados en préstamo en este momento.
+                </p>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/50">
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Tipo</th>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Descripción</th>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Asignación</th>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Estado</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-5 py-3 w-[1%]">Acta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {portalAssets.map(a => (
+                      <tr key={a.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                        <td className="px-5 py-3 text-sm font-medium">{a.type}</td>
+                        <td className="px-5 py-3 text-sm">{portalAssetDescription(a)}</td>
+                        <td className="px-5 py-3 text-sm text-muted-foreground">
+                          {formatPortalAssetAssignedDate(a.assigned_at)}
+                        </td>
+                        <td className="px-5 py-3">
+                          <Badge variant={portalAssetEstadoVariant[a.status] ?? "secondary"} className="text-xs">
+                            {a.status}
+                          </Badge>
+                        </td>
+                        <td className="px-5 py-3 text-right whitespace-nowrap">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs text-primary gap-1 h-8 px-2"
+                            type="button"
+                            disabled={!a.has_loan_act || portalLoanActDownloadingId === a.id}
+                            title={
+                              a.has_loan_act ? "Descargar acta de préstamo (PDF)" : "No hay acta de préstamo cargada"
+                            }
+                            onClick={() => void handleDownloadPortalLoanAct(a)}
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            {portalLoanActDownloadingId === a.id ? "Descargando…" : "PDF"}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {!portalAssetsLoading && !portalAssetsError && hasEmployee && portalAssetsMeta.total > 0 ? (
+                <ListPaginationBar
+                  page={portalAssetsMeta.current_page}
+                  lastPage={portalAssetsMeta.last_page}
+                  total={portalAssetsMeta.total}
+                  pageSize={portalAssetsMeta.per_page}
+                  loading={portalAssetsLoading}
+                  onPageChange={setAssetsPage}
+                />
+              ) : null}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="solicitudes" className="mt-4">
+          <Card className="shadow-card">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-base">Vacaciones</CardTitle>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() => {
+                  resetVacationForm();
+                  setShowNuevaSolicitud(true);
+                }}
+                disabled={!hasEmployee}
+              >
+                Nueva solicitud
+              </Button>
+            </CardHeader>
+            {hasEmployee ? (
+              <div className="px-5 py-3 border-b border-border bg-muted/20 text-sm space-y-1">
+                {vacationBalanceLoading ? (
+                  <p className="text-muted-foreground">Cargando saldo de vacaciones…</p>
+                ) : vacationBalanceError ? (
+                  <div className="space-y-2">
+                    <p className="text-destructive text-xs">{vacationBalanceError}</p>
+                    <Button size="sm" variant="outline" type="button" onClick={() => loadVacationBalance()}>
+                      Reintentar
+                    </Button>
+                  </div>
+                ) : vacationBalance ? (
+                  <>
+                    <p className="font-medium">Saldo de vacaciones ({vacationBalance.year})</p>
+                    <p className="text-xs text-muted-foreground">
+                      Tope anual: {vacationBalance.annual_days} · Usados (aprobados): {vacationBalance.days_used} ·
+                      Pendientes: {vacationBalance.days_pending} · Disponibles: {vacationBalance.days_available}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Cálculo por año calendario; sin arrastre de saldos entre años en esta versión.
+                    </p>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+            <CardContent className="p-0">
+              {vacationLoading ? (
+                <p className="text-sm text-muted-foreground px-5 py-8">Cargando…</p>
+              ) : vacationError ? (
+                <div className="px-5 py-8 space-y-3">
+                  <p className="text-sm text-destructive">{vacationError}</p>
+                  <Button size="sm" variant="outline" type="button" onClick={() => loadVacations()}>
+                    Reintentar
+                  </Button>
+                </div>
+              ) : !hasEmployee ? (
+                <p className="text-sm text-muted-foreground px-5 py-8">{emptyStateNoEmployeeMessage}</p>
+              ) : vacations.length === 0 ? (
+                <p className="text-sm text-muted-foreground px-5 py-8">No hay solicitudes de vacaciones registradas.</p>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/50">
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Tipo</th>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Fechas</th>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Estado</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-5 py-3 w-[1%]">
+                        Acciones
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vacations.map(v => (
+                      <tr key={v.id} className="border-b border-border last:border-0">
+                        <td className="px-5 py-3 text-sm font-medium">Vacaciones</td>
+                        <td className="px-5 py-3 text-sm">
+                          {formatAppDate(v.start_date)} — {formatAppDate(v.end_date)} ({v.days} días)
+                        </td>
+                        <td className="px-5 py-3">
+                          <Badge variant={vacationStatusBadgeVariant(v.status)} className="text-xs">
+                            {vacationStatusLabel(v.status)}
+                          </Badge>
+                        </td>
+                        <td className="px-5 py-3 text-right whitespace-nowrap">
+                          {v.status === "pendiente" ? (
+                            <div className="inline-flex gap-1 justify-end">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                title="Editar"
+                                onClick={() => openEditVacation(v)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                                title="Eliminar"
+                                onClick={() => setVacationToDeleteId(v.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {!vacationLoading && !vacationError && hasEmployee && vacationMeta.total > 0 ? (
+                <ListPaginationBar
+                  page={vacationMeta.current_page}
+                  lastPage={vacationMeta.last_page}
+                  total={vacationMeta.total}
+                  pageSize={vacationMeta.per_page}
+                  loading={vacationLoading}
+                  onPageChange={setVacationPage}
+                />
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-card mt-4">
+            <CardHeader>
+              <CardTitle className="text-base">Renuncia</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Puedes adjuntar tu carta de renuncia en PDF. Si indicas fecha de último día laborable, aplica un preaviso
+                mínimo de {RESIGNATION_MIN_NOTICE_DAYS} días. Recursos Humanos revisará la solicitud; la desvinculación
+                formal (cese en planilla, liquidación, etc.) se gestiona aparte cuando RRHH lo confirme en el sistema.
+              </p>
+              {!hasEmployee ? (
+                <p className="text-sm text-muted-foreground">{emptyStateNoEmployeeMessage}</p>
+              ) : (
+                <>
+                  {hasPendingResignation ? (
+                    <p className="text-sm text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800 rounded-md px-3 py-2">
+                      Tienes una solicitud de renuncia pendiente de revisión por RRHH. Puedes editarla o anularla desde
+                      el historial si necesitas corregir algo; no puedes enviar otra nueva hasta que sea resuelta.
+                    </p>
+                  ) : (
+                    <div className="space-y-3 max-w-lg">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="resignation-pdf">Carta de renuncia (PDF, máx. 5 MB)</Label>
+                        <Input
+                          id="resignation-pdf"
+                          ref={resignationFileInputRef}
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          className="cursor-pointer"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="resignation-date">Fecha propuesta de último día laborable (opcional)</Label>
+                        <Input
+                          id="resignation-date"
+                          type="date"
+                          min={resignationProposedMinIso()}
+                          value={proposedResignationDate}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (!v || v >= resignationProposedMinIso()) {
+                              setProposedResignationDate(v);
+                            }
+                          }}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Solo fechas a partir de {format(addDays(new Date(), RESIGNATION_MIN_NOTICE_DAYS), "dd/MM/yyyy")}{" "}
+                          (hoy + {RESIGNATION_MIN_NOTICE_DAYS} días). Puedes dejar el campo vacío.
+                        </p>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="resignation-notes">Comentario para RRHH (opcional)</Label>
+                        <Textarea
+                          id="resignation-notes"
+                          value={resignationNotesText}
+                          onChange={e => setResignationNotesText(e.target.value)}
+                          rows={3}
+                          placeholder="Ej. motivo breve, periodo de preaviso…"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={submittingResignation}
+                        onClick={() => void handleSubmitResignation()}
+                      >
+                        {submittingResignation ? "Enviando…" : "Enviar carta"}
+                      </Button>
+                    </div>
+                  )}
+
+                  {resignationLoading ? (
+                    <p className="text-sm text-muted-foreground">Cargando historial de renuncias…</p>
+                  ) : resignationError ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-destructive">{resignationError}</p>
+                      <Button size="sm" variant="outline" type="button" onClick={() => void loadResignations()}>
+                        Reintentar
+                      </Button>
+                    </div>
+                  ) : resignations.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Aún no registras solicitudes de renuncia enviadas.</p>
+                  ) : (
+                    <div className="border border-border rounded-lg overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border bg-muted/50">
+                            <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">
+                              Fecha propuesta
+                            </th>
+                            <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Estado</th>
+                            <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Detalle</th>
+                            <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-[1%]">
+                              Acciones
+                            </th>
+                            <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-[1%]">
+                              Carta
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {resignations.map(r => (
+                            <tr key={r.id} className="border-b border-border last:border-0">
+                              <td className="px-3 py-2 tabular-nums">
+                                {r.proposed_effective_date != null ? formatAppDate(r.proposed_effective_date) : "—"}
+                              </td>
+                              <td className="px-3 py-2">
+                                <Badge
+                                  variant={resignationStatusBadgeVariant(r.status)}
+                                  className={
+                                    r.status === "aprobada"
+                                      ? "text-xs bg-emerald-600 hover:bg-emerald-600 text-white border-transparent"
+                                      : "text-xs"
+                                  }
+                                >
+                                  {resignationStatusLabel(r.status)}
+                                </Badge>
+                              </td>
+                              <td className="px-3 py-2 text-xs text-muted-foreground max-w-[200px]">
+                                {r.status === "rechazada" && r.rejection_reason ? (
+                                  <span className="line-clamp-2">{r.rejection_reason}</span>
+                                ) : r.notes ? (
+                                  <span className="line-clamp-2">{r.notes}</span>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right whitespace-nowrap">
+                                {r.status === "pendiente" ? (
+                                  <div className="inline-flex gap-1 justify-end">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      title="Editar"
+                                      onClick={() => openResignationEdit(r)}
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-destructive hover:text-destructive"
+                                      title="Eliminar"
+                                      onClick={() => setResignationToDeleteId(r.id)}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right whitespace-nowrap">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-xs text-primary gap-1 h-8 px-2"
+                                  disabled={resignationLetterDownloadingId === r.id}
+                                  onClick={() => void handleDownloadPortalResignationLetter(r)}
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  {resignationLetterDownloadingId === r.id ? "…" : "PDF"}
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {!resignationLoading && !resignationError && hasEmployee && resignationMeta.total > 0 ? (
+                    <ListPaginationBar
+                      page={resignationMeta.current_page}
+                      lastPage={resignationMeta.last_page}
+                      total={resignationMeta.total}
+                      pageSize={resignationMeta.per_page}
+                      loading={resignationLoading}
+                      onPageChange={setResignationPage}
+                    />
+                  ) : null}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="notificaciones" className="mt-4">
           <Card className="shadow-card">
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
@@ -1739,6 +2063,113 @@ export default function EmployeePortalPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog
+        open={portalAttDayOpen}
+        onOpenChange={(open) => {
+          setPortalAttDayOpen(open);
+          if (!open) {
+            setPortalAttDayRecord(null);
+            setPortalAttDayIso(null);
+            setPortalJustificationDraft("");
+            setPortalJustificationFile(null);
+            if (portalJustificationFileInputRef.current) {
+              portalJustificationFileInputRef.current.value = "";
+            }
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{portalAttDayIso ? formatAppDate(portalAttDayIso) : "Asistencia"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            {!portalAttDayRecord ? (
+              <p className="text-muted-foreground leading-relaxed">
+                No hay registro de asistencia para este día laborable.
+              </p>
+            ) : (
+              <>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
+                  <dt className="text-muted-foreground">Estado</dt>
+                  <dd className="font-medium">{portalAttendanceStatusLabel(portalAttDayRecord.status)}</dd>
+                  <dt className="text-muted-foreground">Entrada</dt>
+                  <dd className="tabular-nums">{portalAttDayRecord.check_in ?? "—"}</dd>
+                  <dt className="text-muted-foreground">Salida</dt>
+                  <dd className="tabular-nums">{portalAttDayRecord.check_out ?? "—"}</dd>
+                  <dt className="text-muted-foreground">Horas</dt>
+                  <dd className="tabular-nums">{formatDecimalHoursAsDuration(portalAttDayRecord.hours_worked)}</dd>
+                </dl>
+                {portalAttDayRecord.justification ? (
+                  <div className="rounded-md bg-muted/50 p-3 text-xs">
+                    <p className="text-muted-foreground mb-1">Comentario registrado</p>
+                    <p className="whitespace-pre-wrap break-words">{portalAttDayRecord.justification}</p>
+                  </div>
+                ) : null}
+                {portalAttDayRecord.has_justification_file ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => void handlePortalDownloadJustification()}
+                  >
+                    <Download className="w-3.5 h-3.5 mr-2" />
+                    Descargar archivo adjunto
+                  </Button>
+                ) : null}
+                {portalCanJustifyStatus(portalAttDayRecord.status) ? (
+                  <div className="space-y-3 border-t border-border pt-3">
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {portalAttDayRecord.status === "tardanza_nj" || portalAttDayRecord.status === "falta_nj"
+                        ? "Esta tardanza o falta aún no está justificada. Indica el motivo o adjunta un documento."
+                        : "Puedes actualizar el comentario o reemplazar el archivo de justificación."}
+                    </p>
+                    <div className="space-y-2">
+                      <Label htmlFor="portal-att-justify-text">Motivo / comentario</Label>
+                      <Textarea
+                        id="portal-att-justify-text"
+                        rows={4}
+                        value={portalJustificationDraft}
+                        onChange={(e) => setPortalJustificationDraft(e.target.value)}
+                        placeholder="Describe el motivo de la justificación…"
+                        disabled={portalJustificationSaving}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="portal-att-justify-file">Archivo adjunto (opcional)</Label>
+                      <Input
+                        id="portal-att-justify-file"
+                        ref={portalJustificationFileInputRef}
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+                        disabled={portalJustificationSaving}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          setPortalJustificationFile(f ?? null);
+                        }}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      className="w-full"
+                      disabled={portalJustificationSaving}
+                      onClick={() => void submitPortalJustification()}
+                    >
+                      {portalJustificationSaving ? "Guardando…" : "Guardar justificación"}
+                    </Button>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+          <DialogFooter className="sm:justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setPortalAttDayOpen(false)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={showNuevaSolicitud}
@@ -1860,9 +2291,19 @@ export default function EmployeePortalPage() {
               <Input
                 id="resignation-edit-date"
                 type="date"
+                min={resignationProposedMinIso()}
                 value={resignationEditDate}
-                onChange={e => setResignationEditDate(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v || v >= resignationProposedMinIso()) {
+                    setResignationEditDate(v);
+                  }
+                }}
               />
+              <p className="text-xs text-muted-foreground">
+                Mínimo {RESIGNATION_MIN_NOTICE_DAYS} días de anticipación respecto a hoy. Deja vacío si no quieres fecha
+                propuesta.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="resignation-edit-notes">Comentario para RRHH (opcional)</Label>

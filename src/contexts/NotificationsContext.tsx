@@ -131,6 +131,14 @@ function linkForApproverUserNotification(
     }
     return "/asistencia?tab=vacaciones";
   }
+  if (k === "attendance.justification" || k.startsWith("attendance.justification")) {
+    const q = new URLSearchParams();
+    q.set("tab", "calendario");
+    if (employeeId != null) {
+      q.set("employee_id", String(employeeId));
+    }
+    return `/asistencia?${q.toString()}`;
+  }
   return "/asistencia?tab=vacaciones";
 }
 
@@ -222,9 +230,13 @@ interface NotificationsContextType {
 const NotificationsContext = createContext<NotificationsContextType | null>(null);
 
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
-  const { hasPermission, user } = useAuth();
+  const { hasPermission, hasAnyPermission, user } = useAuth();
   const canPortal = hasPermission("portal.view");
-  const canApproverInbox = hasPermission("attendance.approve");
+  const canApproverInbox = hasAnyPermission([
+    "attendance.approve",
+    "employees.edit",
+    "attendance.manage",
+  ]);
 
   const [toastNotifications, setToastNotifications] = useState<Notification[]>([]);
   const [portalNotifications, setPortalNotifications] = useState<Notification[]>([]);

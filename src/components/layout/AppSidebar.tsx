@@ -1,22 +1,68 @@
 import { Link, useLocation } from "react-router-dom";
+import type { LucideIcon } from "lucide-react";
 import {
-  LayoutDashboard, Users, CalendarCheck, FileText, UserCircle,
-  Monitor, BarChart3, Settings, ChevronLeft, ChevronRight, ShieldCheck,
+  LayoutDashboard,
+  Users,
+  CalendarCheck,
+  FileText,
+  UserCircle,
+  Monitor,
+  BarChart3,
+  Settings,
+  ChevronLeft,
+  ChevronRight,
+  ShieldCheck,
+  NotebookPen,
+  Calendar as CalendarIcon,
+  Laptop,
+  User,
+  Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 
-const navItems = [
+type NavLinkItem = {
+  label: string;
+  icon: LucideIcon;
+  path: string;
+  permission: string;
+};
+
+const navItemsBeforePortal: NavLinkItem[] = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/", permission: "dashboard.view" },
   { label: "Empleados", icon: Users, path: "/empleados", permission: "employees.view" },
   { label: "Asistencia", icon: CalendarCheck, path: "/asistencia", permission: "attendance.view" },
   { label: "Boletas y Nómina", icon: FileText, path: "/boletas", permission: "payroll.view" },
-  { label: "Portal del Empleado", icon: UserCircle, path: "/portal", permission: "portal.view" },
+];
+
+const portalSingleItem: NavLinkItem = {
+  label: "Portal del Empleado",
+  icon: UserCircle,
+  path: "/portal",
+  permission: "portal.view",
+};
+
+const portalEmployeeModules: { label: string; icon: LucideIcon; to: string; tab: string }[] = [
+  { label: "Datos", icon: NotebookPen, to: "/portal", tab: "datos" },
+  { label: "Mis Asistencias", icon: CalendarIcon, to: "/portal?tab=asistencia", tab: "asistencia" },
+  { label: "Mis Boletas", icon: FileText, to: "/portal?tab=boletas", tab: "boletas" },
+  { label: "Mis Equipos", icon: Laptop, to: "/portal?tab=equipos", tab: "equipos" },
+  { label: "Mis Solicitudes", icon: User, to: "/portal?tab=solicitudes", tab: "solicitudes" },
+  { label: "Notificaciones", icon: Bell, to: "/portal?tab=notificaciones", tab: "notificaciones" },
+];
+
+const navItemsAfterPortal: NavLinkItem[] = [
   { label: "Activos y Equipos", icon: Monitor, path: "/activos", permission: "assets.view" },
   { label: "Reportes", icon: BarChart3, path: "/reportes", permission: "reports.view" },
   { label: "Perfiles y Permisos", icon: ShieldCheck, path: "/perfiles", permission: "settings.profiles" },
   { label: "Configuración", icon: Settings, path: "/configuracion", permission: "settings.view" },
 ];
+
+function portalSidebarTabActive(pathname: string, search: string, tab: string): boolean {
+  if (pathname !== "/portal") return false;
+  const current = new URLSearchParams(search).get("tab") ?? "datos";
+  return current === tab;
+}
 
 interface Props {
   collapsed: boolean;
@@ -25,9 +71,12 @@ interface Props {
 
 export function AppSidebar({ collapsed, onToggle }: Props) {
   const location = useLocation();
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
 
-  const visibleItems = navItems.filter(item => hasPermission(item.permission));
+  const beforePortal = navItemsBeforePortal.filter((item) => hasPermission(item.permission));
+  const afterPortal = navItemsAfterPortal.filter((item) => hasPermission(item.permission));
+  const showPortal = hasPermission("portal.view");
+  const portalAsEmployeeModules = user?.rol === "empleado";
 
   return (
     <aside
@@ -53,9 +102,9 @@ export function AppSidebar({ collapsed, onToggle }: Props) {
 
       {/* Navigation */}
       <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
-        {visibleItems.map((item) => {
-          const isActive = location.pathname === item.path || 
-            (item.path !== "/" && location.pathname.startsWith(item.path));
+        {beforePortal.map((item) => {
+          const isActive =
+            location.pathname === item.path || (item.path !== "/" && location.pathname.startsWith(item.path));
           return (
             <Link
               key={item.path}
@@ -64,7 +113,64 @@ export function AppSidebar({ collapsed, onToggle }: Props) {
                 "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group",
                 isActive
                   ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-md"
-                  : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+              )}
+              title={collapsed ? item.label : undefined}
+            >
+              <item.icon className="w-5 h-5 shrink-0" />
+              {!collapsed && <span className="truncate">{item.label}</span>}
+            </Link>
+          );
+        })}
+        {showPortal && portalAsEmployeeModules
+          ? portalEmployeeModules.map((item) => {
+              const isActive = portalSidebarTabActive(location.pathname, location.search, item.tab);
+              return (
+                <Link
+                  key={`portal-${item.tab}`}
+                  to={item.to}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group",
+                    isActive
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-md"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  )}
+                  title={collapsed ? item.label : undefined}
+                >
+                  <item.icon className="w-5 h-5 shrink-0" />
+                  {!collapsed && <span className="truncate">{item.label}</span>}
+                </Link>
+              );
+            })
+          : null}
+        {showPortal && !portalAsEmployeeModules ? (
+          <Link
+            to={portalSingleItem.path}
+            className={cn(
+              "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group",
+              location.pathname === "/portal" ||
+                (portalSingleItem.path !== "/" && location.pathname.startsWith(portalSingleItem.path))
+                ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-md"
+                : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+            )}
+            title={collapsed ? portalSingleItem.label : undefined}
+          >
+            <portalSingleItem.icon className="w-5 h-5 shrink-0" />
+            {!collapsed && <span className="truncate">{portalSingleItem.label}</span>}
+          </Link>
+        ) : null}
+        {afterPortal.map((item) => {
+          const isActive =
+            location.pathname === item.path || (item.path !== "/" && location.pathname.startsWith(item.path));
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={cn(
+                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group",
+                isActive
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-md"
+                  : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
               )}
               title={collapsed ? item.label : undefined}
             >
