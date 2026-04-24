@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,24 +27,15 @@ import {
   deleteDeductionPlanEvidence,
   downloadDeductionPlanEvidenceBlob,
   fetchDeductionInstallmentPlans,
-  fetchIncomeTaxFifthPreview,
-  fetchPayrollPeriods,
-  fetchPrevisionalPreview,
   patchDeductionInstallmentPlan,
-  previewAttendanceDeductions,
   uploadDeductionPlanEvidence,
   type DeductionInstallmentPlan,
   type DeductionInstallmentPlanWriteBody,
-  type IncomeTaxFifthPreviewData,
-  type PrevisionalPreviewData,
 } from "@/api/payroll";
-import type { PayrollPeriod } from "@/api/payroll";
-import type { components } from "@/api/contracts";
 import { formatEmployeeName } from "@/lib/employeeName";
-import { formatAppDate, formatAppMonthYear } from "@/lib/formatAppDate";
-import { formatRatioPercent, regimeResolvedLabel } from "@/lib/previsionalDisplay";
+import { deductionPlanCategoryLabelEs } from "@/lib/payrollDeductionHelpers";
 import { useAuth } from "@/contexts/AuthContext";
-import { ClipboardCopy, Download, FileUp, Loader2, Pencil, Trash2, XCircle } from "lucide-react";
+import { Download, FileUp, Loader2, Pencil, Trash2, XCircle } from "lucide-react";
 
 const CATEGORY_OPTIONS: { value: NonNullable<DeductionInstallmentPlanWriteBody["category"]>; label: string }[] = [
   { value: "damage_equipment", label: "Daño a equipo" },
@@ -55,8 +46,7 @@ const CATEGORY_OPTIONS: { value: NonNullable<DeductionInstallmentPlanWriteBody["
 
 function categoryLabel(slug: string | null | undefined): string {
   if (!slug) return "—";
-  const row = CATEGORY_OPTIONS.find((c) => c.value === slug);
-  return row?.label ?? slug;
+  return deductionPlanCategoryLabelEs(slug);
 }
 
 function planStatusLabel(s: string): string {
@@ -88,26 +78,16 @@ function formatPen(amount: string): string {
   return `S/ ${n.toFixed(2)}`;
 }
 
-type AttendancePreviewData = components["schemas"]["AttendanceDeductionPreviewData"];
-
-function defaultGrossFromEmployee(emp: Employee | undefined): string {
-  if (!emp?.salary) return "";
-  const n = Number.parseFloat(String(emp.salary).replace(",", "."));
-  return Number.isNaN(n) ? "" : n.toFixed(2);
-}
-
 export default function DeductionsPage() {
   const { toast } = useToast();
   const { hasPermission } = useAuth();
   const canManage = hasPermission("payroll.generate");
-  const canViewPayrollPreview = hasPermission("payroll.view");
   const [searchParams] = useSearchParams();
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [employeesLoading, setEmployeesLoading] = useState(true);
   const [employeeId, setEmployeeId] = useState<string>("");
 
-  const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [plans, setPlans] = useState<DeductionInstallmentPlan[]>([]);
   const [plansLoading, setPlansLoading] = useState(false);
 
@@ -121,9 +101,6 @@ export default function DeductionsPage() {
   const [createDescription, setCreateDescription] = useState("");
   const [createTotal, setCreateTotal] = useState("");
   const [createMonths, setCreateMonths] = useState("");
-  const [createPeriodId, setCreatePeriodId] = useState<string>("");
-  const [createNotes, setCreateNotes] = useState("");
-  const [createAssetId, setCreateAssetId] = useState<string>("");
   const [assets, setAssets] = useState<Asset[]>([]);
   const [createSaving, setCreateSaving] = useState(false);
 
@@ -136,15 +113,6 @@ export default function DeductionsPage() {
 
   const [evidencePlanId, setEvidencePlanId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const [attPeriodId, setAttPeriodId] = useState("");
-  const [attGrossInput, setAttGrossInput] = useState("");
-  const [attPreview, setAttPreview] = useState<AttendancePreviewData | null>(null);
-  const [attPreviewLoading, setAttPreviewLoading] = useState(false);
-  const [attPrevisionalData, setAttPrevisionalData] = useState<PrevisionalPreviewData | null>(null);
-  const [attPrevisionalError, setAttPrevisionalError] = useState<string | null>(null);
-  const [attIncomeTaxFifthData, setAttIncomeTaxFifthData] = useState<IncomeTaxFifthPreviewData | null>(null);
-  const [attIncomeTaxFifthError, setAttIncomeTaxFifthError] = useState<string | null>(null);
 
   useEffect(() => {
     const q = searchParams.get("employee");
@@ -171,50 +139,12 @@ export default function DeductionsPage() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetchPayrollPeriods();
-        if (!cancelled) setPeriods(r.data);
-      } catch {
-        if (!cancelled) setPeriods([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const selectedEmpId = Number.parseInt(employeeId, 10);
-
-  const pendingInstallmentPlans = useMemo(
-    () =>
-      plans.filter(
-        (p) =>
-          p.status === "active" &&
-          p.next_installment_number != null &&
-          p.next_installment_amount != null,
-      ),
-    [plans],
-  );
-
-  useEffect(() => {
-    setAttPreview(null);
-    setAttPrevisionalData(null);
-    setAttPrevisionalError(null);
-    setAttIncomeTaxFifthData(null);
-    setAttIncomeTaxFifthError(null);
-    const emp = employees.find((e) => e.id === selectedEmpId);
-    setAttGrossInput(defaultGrossFromEmployee(emp));
-    setAttPeriodId("");
-  }, [employeeId, employees, selectedEmpId]);
 
   useEffect(() => {
     let cancelled = false;
     if (Number.isNaN(selectedEmpId)) {
       setAssets([]);
-      setCreateAssetId("");
       return undefined;
     }
     (async () => {
@@ -222,7 +152,6 @@ export default function DeductionsPage() {
         const list = await fetchAllAssetsForEmployee(selectedEmpId);
         if (!cancelled) {
           setAssets(list);
-          setCreateAssetId("");
         }
       } catch {
         if (!cancelled) setAssets([]);
@@ -268,9 +197,6 @@ export default function DeductionsPage() {
     setCreateDescription("");
     setCreateTotal("");
     setCreateMonths("");
-    setCreatePeriodId("");
-    setCreateNotes("");
-    setCreateAssetId("");
     setCreateOpen(true);
   };
 
@@ -292,9 +218,6 @@ export default function DeductionsPage() {
       installment_count: months,
       category: createCategory as DeductionInstallmentPlanWriteBody["category"],
       description: createDescription.trim() || undefined,
-      notes: createNotes.trim() || undefined,
-      start_payroll_period_id: createPeriodId ? Number.parseInt(createPeriodId, 10) : undefined,
-      asset_id: createAssetId ? Number.parseInt(createAssetId, 10) : undefined,
     };
     setCreateSaving(true);
     try {
@@ -412,210 +335,6 @@ export default function DeductionsPage() {
     }
   };
 
-  const loadAttendancePreview = useCallback(async () => {
-    if (Number.isNaN(selectedEmpId) || !attPeriodId) {
-      toast({ title: "Periodo requerido", description: "Selecciona un periodo de nómina.", variant: "destructive" });
-      return;
-    }
-    setAttPreviewLoading(true);
-    setAttPrevisionalData(null);
-    setAttPrevisionalError(null);
-    setAttIncomeTaxFifthData(null);
-    setAttIncomeTaxFifthError(null);
-    try {
-      const grossParsed = Number.parseFloat(attGrossInput.replace(",", "."));
-      const body: {
-        employee_id: number;
-        payroll_period_id: number;
-        gross_amount?: number;
-      } = {
-        employee_id: selectedEmpId,
-        payroll_period_id: Number.parseInt(attPeriodId, 10),
-      };
-      const hasGross = Number.isFinite(grossParsed) && grossParsed > 0;
-      if (hasGross) {
-        body.gross_amount = grossParsed;
-      }
-      const res = await previewAttendanceDeductions(body);
-      setAttPreview(res.data);
-
-      if (hasGross) {
-        try {
-          const prevRes = await fetchPrevisionalPreview({
-            employee_id: selectedEmpId,
-            payroll_period_id: Number.parseInt(attPeriodId, 10),
-            gross_amount: grossParsed,
-          });
-          setAttPrevisionalData(prevRes.data);
-        } catch (pe) {
-          setAttPrevisionalData(null);
-          setAttPrevisionalError(mutationErrorMessage(pe));
-        }
-        try {
-          const fifthRes = await fetchIncomeTaxFifthPreview({
-            payroll_period_id: Number.parseInt(attPeriodId, 10),
-            gross_amount: grossParsed,
-          });
-          setAttIncomeTaxFifthData(fifthRes.data);
-        } catch (fe) {
-          setAttIncomeTaxFifthData(null);
-          setAttIncomeTaxFifthError(mutationErrorMessage(fe));
-        }
-      }
-    } catch (e) {
-      toast({ title: "Sugerencia asistencia", description: mutationErrorMessage(e), variant: "destructive" });
-      setAttPreview(null);
-      setAttPrevisionalData(null);
-      setAttPrevisionalError(null);
-      setAttIncomeTaxFifthData(null);
-      setAttIncomeTaxFifthError(null);
-    } finally {
-      setAttPreviewLoading(false);
-    }
-  }, [selectedEmpId, attPeriodId, attGrossInput, toast]);
-
-  const buildInstallmentCopyLines = (): string[] => {
-    if (pendingInstallmentPlans.length === 0) return [];
-    const out: string[] = [
-      "",
-      "--- Planes de descuento activos (referencia) ---",
-      "Esta cuota se aplica realmente desde Boletas y Nómina al añadirla al desglose y aprobar la boleta.",
-      "",
-    ];
-    for (const p of pendingInstallmentPlans) {
-      out.push(
-        `Plan: ${p.label}`,
-        `Categoría: ${categoryLabel(p.category)}`,
-        `Próxima cuota: ${p.next_installment_number} de ${p.installment_count}`,
-        `Importe sugerido: ${formatPen(p.next_installment_amount)}`,
-        `Saldo pendiente: ${formatPen(p.remaining_total_amount)}`,
-        `Código desglose: installment:${p.id}`,
-      );
-      if (p.asset) {
-        out.push(
-          `Equipo: ${p.asset.type}${p.asset.model != null && p.asset.model !== "" ? ` · ${p.asset.model}` : ""}`,
-        );
-      }
-      out.push("");
-    }
-    return out;
-  };
-
-  const copyAttendanceSummary = async () => {
-    if (!attPreview && pendingInstallmentPlans.length === 0) return;
-    const selectedEmployee = employees.find((e) => e.id === selectedEmpId);
-    const refHead =
-      selectedEmployee != null
-        ? `Referencia de descuentos — ${formatEmployeeName(selectedEmployee)}`
-        : `Referencia de descuentos — #${selectedEmpId}`;
-    const baseLines = attPreview
-      ? [
-      `Periodo: ${attPreview.period_from} a ${attPreview.period_to}`,
-      `Faltas no justificadas (descuento): ${attPreview.absence_days_unjustified}`,
-      `Faltas justificadas (info): ${attPreview.absence_days_justified}`,
-      `Tardanzas no justificadas (descuento): ${attPreview.tardiness_events_unjustified}`,
-      `Tardanzas justificadas (info): ${attPreview.tardiness_events_justified}`,
-      `Déficit minutos (NJ): ${attPreview.tardiness_deficit_minutes}`,
-      `Vacaciones: ${attPreview.vacation_records} · Recuperación: ${attPreview.recuperacion_records} · Asistido: ${attPreview.asistido_records}`,
-      attPreview.suggested_amounts_computed
-        ? `Sugerido faltas NJ: S/ ${attPreview.suggested_deduction_absence.toFixed(2)} · tardanzas NJ: S/ ${attPreview.suggested_deduction_lateness.toFixed(2)} (bruto ${attPreview.gross_amount_basis})`
-        : "Montos sugeridos no calculados (indica bruto o usa solo conteos).",
-      "",
-      attPreview.formula_note,
-    ]
-      : [refHead, "", "Sugerencia de asistencia: no calculada. Presioná «Calcular sugerencia» para incluir asistencia y previsional."];
-    const previsionalLines: string[] = [];
-    if (attPreview) {
-      if (!attPreview.suggested_amounts_computed) {
-        previsionalLines.push("", "Descuento previsional (referencia): ingresa un bruto mensual para calcular la referencia.");
-      } else if (attPrevisionalError) {
-        previsionalLines.push("", `Descuento previsional (referencia, error): ${attPrevisionalError}`);
-      } else if (attPrevisionalData) {
-        previsionalLines.push("", "--- Descuento previsional (referencia) ---");
-        if (attPrevisionalData.status === "unsupported_regime") {
-          previsionalLines.push(
-            `Régimen no soportado para cálculo automático${
-              attPrevisionalData.pension_fund_original != null && attPrevisionalData.pension_fund_original !== ""
-                ? ` (${attPrevisionalData.pension_fund_original})`
-                : ""
-            }. Revisá la ficha del empleado.`,
-          );
-        } else if (attPrevisionalData.status === "missing_legal_rate") {
-          previsionalLines.push(
-            `Sin tasa legal para la fecha ${attPrevisionalData.reference_date}${
-              attPrevisionalData.legal_parameter_key != null ? ` (${attPrevisionalData.legal_parameter_key})` : ""
-            }`,
-          );
-        } else {
-          previsionalLines.push(
-            `Sistema detectado: ${regimeResolvedLabel(attPrevisionalData.regime_resolved)}`,
-            attPrevisionalData.pension_fund_original != null && attPrevisionalData.pension_fund_original !== ""
-              ? `Texto en perfil: ${attPrevisionalData.pension_fund_original}`
-              : "Texto en perfil: —",
-            `Tasa aplicada: ${formatRatioPercent(attPrevisionalData.ratio)}`,
-            `Base (bruto): ${attPrevisionalData.base_amount}`,
-            `Monto sugerido: ${attPrevisionalData.amount ?? "—"}`,
-            `Fecha referencia legal: ${attPrevisionalData.reference_date}`,
-          );
-        }
-      }
-    }
-    const incomeTaxFifthLines: string[] = [];
-    if (attPreview) {
-      if (!attPreview.suggested_amounts_computed) {
-        incomeTaxFifthLines.push(
-          "",
-          "Impuesto a la renta 5ta categoría (referencia): ingresa un bruto mensual para calcular la referencia de renta.",
-        );
-      } else if (attIncomeTaxFifthError) {
-        incomeTaxFifthLines.push("", `Impuesto a la renta 5ta categoría (referencia, error): ${attIncomeTaxFifthError}`);
-      } else if (attIncomeTaxFifthData) {
-        incomeTaxFifthLines.push("", "--- Impuesto a la renta 5ta categoría (referencia) ---");
-        if (attIncomeTaxFifthData.status === "missing_uit") {
-          incomeTaxFifthLines.push(
-            "No se puede calcular renta porque falta UIT vigente en Parámetros legales.",
-            `Proyección anual (referencia, sin UIT): ${attIncomeTaxFifthData.annual_projected_gross}`,
-          );
-        } else if (attIncomeTaxFifthData.status === "invalid_gross") {
-          incomeTaxFifthLines.push("Estado: bruto no válido para el cálculo de renta.");
-        } else {
-          const grossUsed =
-            attPreview.gross_amount_basis != null ? String(attPreview.gross_amount_basis) : attGrossInput.trim() || "—";
-          incomeTaxFifthLines.push(
-            `Estado: ${attIncomeTaxFifthData.status}`,
-            `Versión cálculo: ${attIncomeTaxFifthData.calculation_version}`,
-            `UIT usada (PEN): ${attIncomeTaxFifthData.uit_pen ?? "—"}`,
-            `Bruto mensual usado: ${grossUsed}`,
-            `Renta anual proyectada: ${attIncomeTaxFifthData.annual_projected_gross}`,
-            `Deducción 7 UIT: ${attIncomeTaxFifthData.deduction_7_uit_amount ?? "—"}`,
-            `Base imponible anual: ${attIncomeTaxFifthData.taxable_annual_base ?? "—"}`,
-            `Impuesto anual estimado: ${attIncomeTaxFifthData.annual_tax ?? "—"}`,
-            `Retención mensual sugerida: ${attIncomeTaxFifthData.monthly_suggested_retention ?? "—"}`,
-            `Tasa efectiva (sobre proyección anual): ${
-              attIncomeTaxFifthData.effective_rate != null
-                ? `${(Number.parseFloat(attIncomeTaxFifthData.effective_rate) * 100).toFixed(2)}%`
-                : "—"
-            }`,
-            `Fecha referencia legal: ${attIncomeTaxFifthData.reference_date}`,
-          );
-          const monthlyStr = attIncomeTaxFifthData.monthly_suggested_retention;
-          if (monthlyStr != null && Number.parseFloat(monthlyStr) === 0) {
-            incomeTaxFifthLines.push(
-              "No se sugiere retención porque la proyección anual no supera 7 UIT.",
-            );
-          }
-        }
-      }
-    }
-    const text = [...baseLines, ...previsionalLines, ...incomeTaxFifthLines, ...buildInstallmentCopyLines()].join("\n");
-    try {
-      await navigator.clipboard.writeText(text);
-      toast({ title: "Copiado", description: "Resumen en el portapapeles." });
-    } catch {
-      toast({ title: "No se pudo copiar", variant: "destructive" });
-    }
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       <input
@@ -671,391 +390,6 @@ export default function DeductionsPage() {
 
       {employeeId ? (
         <>
-          {canViewPayrollPreview ? (
-            <Card className="shadow-card">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Sugerencia de descuento</CardTitle>
-                <p className="text-sm text-muted-foreground font-normal leading-relaxed pt-1">
-                  Resumen referencial de descuentos del período. No crea descuentos ni modifica boletas. Para aplicar en
-                  boleta usá{" "}
-                  <Link to="/boletas" className="text-primary underline">
-                    Boletas y Nómina
-                  </Link>
-                  .
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label className="text-sm">Periodo de nómina</Label>
-                    <Select value={attPeriodId || "__none__"} onValueChange={(v) => setAttPeriodId(v === "__none__" ? "" : v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Elegir periodo" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">—</SelectItem>
-                        {periods.map((per) => (
-                          <SelectItem key={per.id} value={String(per.id)}>
-                            {formatAppMonthYear(per.month, per.year)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-sm">Bruto mensual (PEN, opcional)</Label>
-                    <Input
-                      value={attGrossInput}
-                      onChange={(e) => setAttGrossInput(e.target.value)}
-                      placeholder="Ej: sueldo del perfil"
-                      inputMode="decimal"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      Si está vacío o 0, solo verás conteos; los importes sugeridos requieren un monto base.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={!attPeriodId || attPreviewLoading}
-                    onClick={() => void loadAttendancePreview()}
-                  >
-                    {attPreviewLoading ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin mr-2" /> Calculando…
-                      </>
-                    ) : (
-                      "Calcular sugerencia"
-                    )}
-                  </Button>
-                  {attPreview || pendingInstallmentPlans.length > 0 ? (
-                    <Button type="button" size="sm" variant="outline" onClick={() => void copyAttendanceSummary()}>
-                      <ClipboardCopy className="w-4 h-4 mr-2" /> Copiar resumen
-                    </Button>
-                  ) : null}
-                </div>
-
-                {attPreview ? (
-                  <div className="rounded-lg border border-border bg-muted/10 p-4 space-y-3">
-                    <h3 className="text-sm font-semibold text-foreground">Resumen por asistencia</h3>
-                    <div className="overflow-x-auto -mx-1 px-1">
-                      <table className="w-full text-sm">
-                        <tbody className="[&_td]:py-2 [&_td]:align-top [&_tr]:border-b [&_tr]:border-border/60 last:[&_tr]:border-0">
-                          <tr>
-                            <td className="pr-4 text-muted-foreground w-[min(14rem,45%)]">Período considerado</td>
-                            <td className="font-medium tabular-nums">
-                              {attPreview.period_from} → {attPreview.period_to}
-                            </td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Faltas no justificadas</td>
-                            <td className="font-medium">{attPreview.absence_days_unjustified}</td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Faltas justificadas</td>
-                            <td className="font-medium">{attPreview.absence_days_justified}</td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Tardanzas NJ</td>
-                            <td className="font-medium">
-                              {attPreview.tardiness_events_unjustified} · déficit {attPreview.tardiness_deficit_minutes} min
-                            </td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Tardanzas justificadas</td>
-                            <td className="font-medium">{attPreview.tardiness_events_justified}</td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Vacaciones</td>
-                            <td className="font-medium">{attPreview.vacation_records}</td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Recuperación</td>
-                            <td className="font-medium">{attPreview.recuperacion_records}</td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Asistido</td>
-                            <td className="font-medium">{attPreview.asistido_records}</td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Sugerido faltas NJ</td>
-                            <td className="font-medium">
-                              {attPreview.suggested_amounts_computed
-                                ? formatPen(String(attPreview.suggested_deduction_absence))
-                                : "—"}
-                            </td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Sugerido tardanzas NJ</td>
-                            <td className="font-medium">
-                              {attPreview.suggested_amounts_computed
-                                ? formatPen(String(attPreview.suggested_deduction_lateness))
-                                : "—"}
-                            </td>
-                          </tr>
-                          <tr>
-                            <td className="pr-4 text-muted-foreground">Bruto usado</td>
-                            <td className="font-medium">
-                              {attPreview.suggested_amounts_computed
-                                ? formatPen(String(attPreview.gross_amount_basis))
-                                : "—"}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                    {!attPreview.suggested_amounts_computed ? (
-                      <p className="text-sm text-muted-foreground border-t border-border/60 pt-3">
-                        Indicá un bruto mayor que cero para ver montos sugeridos; jornada referencia {attPreview.full_time_daily_minutes}{" "}
-                        min/día.
-                      </p>
-                    ) : null}
-                    <p className="text-xs text-muted-foreground leading-relaxed border-t border-border/60 pt-3">
-                      {attPreview.formula_note}
-                    </p>
-                  </div>
-                ) : null}
-
-                {attPreview ? (
-                  <div className="rounded-lg border border-border bg-muted/10 p-4 space-y-3">
-                    <h3 className="text-sm font-semibold text-foreground">Descuento previsional</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Según sistema previsional del perfil y parámetros legales vigentes.
-                    </p>
-                    {!attPreview.suggested_amounts_computed ? (
-                      <p className="text-sm text-muted-foreground">
-                        Ingresá un bruto mensual para calcular la referencia previsional.
-                      </p>
-                    ) : attPrevisionalError ? (
-                      <p className="text-sm text-destructive">{attPrevisionalError}</p>
-                    ) : attPrevisionalData == null ? (
-                      <p className="text-sm text-muted-foreground">—</p>
-                    ) : attPrevisionalData.status === "unsupported_regime" ? (
-                      <p className="text-sm text-amber-800 dark:text-amber-200/90">
-                        Régimen no soportado para cálculo automático
-                        {attPrevisionalData.pension_fund_original != null && attPrevisionalData.pension_fund_original !== ""
-                          ? ` (${attPrevisionalData.pension_fund_original})`
-                          : ""}
-                        . Revisá la ficha del empleado o cargá la boleta manualmente en Boletas y Nómina.
-                      </p>
-                    ) : attPrevisionalData.status === "missing_legal_rate" ? (
-                      <p className="text-sm text-amber-800 dark:text-amber-200/90">
-                        No hay tasa legal configurada para la fecha de referencia{" "}
-                        {formatAppDate(attPrevisionalData.reference_date)}.
-                        {attPrevisionalData.legal_parameter_key != null
-                          ? ` (${attPrevisionalData.legal_parameter_key})`
-                          : ""}
-                      </p>
-                    ) : (
-                      <div className="overflow-x-auto -mx-1 px-1">
-                        <table className="w-full text-sm max-w-xl">
-                          <tbody className="[&_td]:py-2 [&_td]:align-top [&_tr]:border-b [&_tr]:border-border/60 last:[&_tr]:border-0">
-                            <tr>
-                              <td className="pr-4 text-muted-foreground w-[min(12rem,42%)]">Sistema detectado</td>
-                              <td className="font-medium">{regimeResolvedLabel(attPrevisionalData.regime_resolved)}</td>
-                            </tr>
-                            <tr>
-                              <td className="pr-4 text-muted-foreground">Texto en perfil</td>
-                              <td className="font-medium">
-                                {attPrevisionalData.pension_fund_original != null &&
-                                attPrevisionalData.pension_fund_original !== ""
-                                  ? attPrevisionalData.pension_fund_original
-                                  : "—"}
-                              </td>
-                            </tr>
-                            <tr>
-                              <td className="pr-4 text-muted-foreground">Tasa aplicada</td>
-                              <td className="font-medium">{formatRatioPercent(attPrevisionalData.ratio)}</td>
-                            </tr>
-                            <tr>
-                              <td className="pr-4 text-muted-foreground">Base (bruto usado)</td>
-                              <td className="font-medium">{formatPen(attPrevisionalData.base_amount)}</td>
-                            </tr>
-                            <tr>
-                              <td className="pr-4 text-muted-foreground">Fecha referencia legal</td>
-                              <td className="font-medium">{formatAppDate(attPrevisionalData.reference_date)}</td>
-                            </tr>
-                            <tr>
-                              <td className="pr-4 text-muted-foreground">Monto sugerido</td>
-                              <td className="font-semibold text-destructive tabular-nums">
-                                {attPrevisionalData.amount != null ? formatPen(attPrevisionalData.amount) : "—"}
-                              </td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-
-                {attPreview ? (
-                  <div className="rounded-lg border border-border bg-muted/10 p-4 space-y-3">
-                    <h3 className="text-sm font-semibold text-foreground">Impuesto a la renta 5ta categoría (referencia)</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Cálculo referencial (misma lógica que en Boletas y Nómina). No crea descuentos ni modifica boletas.
-                    </p>
-                    {!attPreview.suggested_amounts_computed ? (
-                      <p className="text-sm text-muted-foreground">
-                        Ingresa un bruto mensual para calcular la referencia de renta.
-                      </p>
-                    ) : attIncomeTaxFifthError ? (
-                      <p className="text-sm text-destructive">{attIncomeTaxFifthError}</p>
-                    ) : attIncomeTaxFifthData == null ? (
-                      <p className="text-sm text-muted-foreground">—</p>
-                    ) : attIncomeTaxFifthData.status === "missing_uit" ? (
-                      <p className="text-sm text-amber-800 dark:text-amber-200/90">
-                        No se puede calcular renta porque falta UIT vigente en Parámetros legales.
-                      </p>
-                    ) : attIncomeTaxFifthData.status === "invalid_gross" ? (
-                      <p className="text-sm text-muted-foreground">Bruto no válido para el cálculo.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="overflow-x-auto -mx-1 px-1">
-                          <table className="w-full text-sm max-w-xl">
-                            <tbody className="[&_td]:py-2 [&_td]:align-top [&_tr]:border-b [&_tr]:border-border/60 last:[&_tr]:border-0">
-                              <tr>
-                                <td className="pr-4 text-muted-foreground w-[min(12rem,42%)]">Estado del cálculo</td>
-                                <td className="font-medium">{attIncomeTaxFifthData.status}</td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">Versión</td>
-                                <td className="font-medium font-mono text-xs">{attIncomeTaxFifthData.calculation_version}</td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">UIT usada (PEN)</td>
-                                <td className="font-medium tabular-nums">
-                                  {attIncomeTaxFifthData.uit_pen != null ? formatPen(attIncomeTaxFifthData.uit_pen) : "—"}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">Bruto mensual usado</td>
-                                <td className="font-medium tabular-nums">
-                                  {attPreview.gross_amount_basis != null
-                                    ? formatPen(String(attPreview.gross_amount_basis))
-                                    : attGrossInput.trim() !== ""
-                                      ? formatPen(attGrossInput)
-                                      : "—"}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">Renta anual proyectada</td>
-                                <td className="font-medium tabular-nums">
-                                  {formatPen(attIncomeTaxFifthData.annual_projected_gross)}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">Deducción 7 UIT</td>
-                                <td className="font-medium tabular-nums">
-                                  {attIncomeTaxFifthData.deduction_7_uit_amount != null
-                                    ? formatPen(attIncomeTaxFifthData.deduction_7_uit_amount)
-                                    : "—"}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">Base imponible anual</td>
-                                <td className="font-medium tabular-nums">
-                                  {attIncomeTaxFifthData.taxable_annual_base != null
-                                    ? formatPen(attIncomeTaxFifthData.taxable_annual_base)
-                                    : "—"}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">Impuesto anual estimado</td>
-                                <td className="font-medium tabular-nums">
-                                  {attIncomeTaxFifthData.annual_tax != null ? formatPen(attIncomeTaxFifthData.annual_tax) : "—"}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">Retención mensual sugerida</td>
-                                <td className="font-semibold text-destructive tabular-nums">
-                                  {attIncomeTaxFifthData.monthly_suggested_retention != null
-                                    ? formatPen(attIncomeTaxFifthData.monthly_suggested_retention)
-                                    : "—"}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">Tasa efectiva</td>
-                                <td className="font-medium">
-                                  {attIncomeTaxFifthData.effective_rate != null
-                                    ? `${(Number.parseFloat(attIncomeTaxFifthData.effective_rate) * 100).toFixed(2)}%`
-                                    : "—"}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td className="pr-4 text-muted-foreground">Fecha referencia legal</td>
-                                <td className="font-medium">{formatAppDate(attIncomeTaxFifthData.reference_date)}</td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                        {attIncomeTaxFifthData.monthly_suggested_retention != null &&
-                        Number.parseFloat(attIncomeTaxFifthData.monthly_suggested_retention) === 0 ? (
-                          <p className="text-sm text-muted-foreground border-t border-border/60 pt-3">
-                            No se sugiere retención porque la proyección anual no supera 7 UIT.
-                          </p>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-
-                <div className="rounded-lg border border-border bg-muted/10 p-4 space-y-3">
-                  <h3 className="text-sm font-semibold text-foreground">Planes de descuento activos</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Próxima cuota según el plan (no depende del período elegido arriba). Se aplica desde{" "}
-                    <Link to="/boletas" className="text-primary underline">
-                      Boletas y Nómina
-                    </Link>{" "}
-                    al incluir la línea en el desglose y aprobar la boleta.
-                  </p>
-                  {pendingInstallmentPlans.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No hay planes de cuotas con cuotas pendientes.</p>
-                  ) : (
-                    <div className="overflow-x-auto -mx-1 px-1">
-                      <table className="w-full text-sm min-w-[640px]">
-                        <thead>
-                          <tr className="border-b border-border bg-muted/40 text-left">
-                            <th className="p-2 font-medium">Título</th>
-                            <th className="p-2 font-medium">Categoría</th>
-                            <th className="p-2 font-medium whitespace-nowrap">Próxima cuota</th>
-                            <th className="p-2 font-medium whitespace-nowrap">Monto</th>
-                            <th className="p-2 font-medium whitespace-nowrap">Saldo pendiente</th>
-                            <th className="p-2 font-medium">Equipo</th>
-                            <th className="p-2 font-medium whitespace-nowrap">Código</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pendingInstallmentPlans.map((p) => (
-                            <tr key={p.id} className="border-b border-border/60 last:border-0">
-                              <td className="p-2 align-top font-medium">{p.label}</td>
-                              <td className="p-2 align-top">{categoryLabel(p.category)}</td>
-                              <td className="p-2 align-top tabular-nums whitespace-nowrap">
-                                {p.next_installment_number} / {p.installment_count}
-                              </td>
-                              <td className="p-2 align-top tabular-nums whitespace-nowrap">
-                                {p.next_installment_amount != null ? formatPen(p.next_installment_amount) : "—"}
-                              </td>
-                              <td className="p-2 align-top tabular-nums whitespace-nowrap">{formatPen(p.remaining_total_amount)}</td>
-                              <td className="p-2 align-top text-muted-foreground">
-                                {p.asset
-                                  ? `${p.asset.type}${p.asset.model != null && p.asset.model !== "" ? ` · ${p.asset.model}` : ""}`
-                                  : "—"}
-                              </td>
-                              <td className="p-2 align-top font-mono text-xs text-muted-foreground whitespace-nowrap">
-                                installment:{p.id}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
         <Card className="shadow-card">
           <CardHeader>
             <CardTitle className="text-base">Planes de descuento</CardTitle>
@@ -1228,45 +562,9 @@ export default function DeductionsPage() {
                 <Input value={createTotal} onChange={(e) => setCreateTotal(e.target.value)} placeholder="600.00" />
               </div>
               <div className="space-y-1.5">
-                <Label>N.º cuotas *</Label>
+                <Label>N.° cuotas *</Label>
                 <Input value={createMonths} onChange={(e) => setCreateMonths(e.target.value)} placeholder="3" inputMode="numeric" />
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Periodo de inicio (opcional)</Label>
-              <Select value={createPeriodId || "__none__"} onValueChange={(v) => setCreatePeriodId(v === "__none__" ? "" : v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Sin definir" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Sin definir</SelectItem>
-                  {periods.map((per) => (
-                    <SelectItem key={per.id} value={String(per.id)}>
-                      {per.year}-{String(per.month).padStart(2, "0")}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Activo / equipo (opcional)</Label>
-              <Select value={createAssetId || "__none__"} onValueChange={(v) => setCreateAssetId(v === "__none__" ? "" : v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Ninguno" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Ninguno</SelectItem>
-                  {assets.map((a) => (
-                    <SelectItem key={a.id} value={String(a.id)}>
-                      {a.type} {a.model ? `· ${a.model}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Notas internas</Label>
-              <Textarea value={createNotes} onChange={(e) => setCreateNotes(e.target.value)} rows={2} />
             </div>
           </div>
           <DialogFooter>

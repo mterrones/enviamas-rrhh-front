@@ -26,6 +26,7 @@ export type AttendanceMergeKind =
   | "applied_both"
   | "applied_absence_only"
   | "applied_lateness_only"
+  | "applied_both_zero"
   | "cleared_needs_gross"
   | "cleared_no_incidents"
   | "cleared_no_monetary_lines";
@@ -42,41 +43,28 @@ export function mergeAttendancePreviewIntoDeductionLines(
 
   const absAmt = preview.suggested_deduction_absence;
   const latAmt = preview.suggested_deduction_lateness;
-  const hasAbsLine = absAmt > 0;
-  const hasLatLine = latAmt > 0;
+  const hasAbsMoney = absAmt > 0;
+  const hasLatMoney = latAmt > 0;
 
-  if (!hasAbsLine && !hasLatLine) {
-    const hasIncidents = preview.absence_days_unjustified > 0 || preview.tardiness_events_unjustified > 0;
-    return {
-      lines: base,
-      kind: hasIncidents ? "cleared_no_monetary_lines" : "cleared_no_incidents",
-    };
-  }
-
-  const out: DeductionLineDraft[] = [...base];
-  if (hasAbsLine) {
-    out.push(
-      newDeductionLine({
-        code: ATTENDANCE_DEDUCTION_LINE_CODE_ABSENCE,
-        label: ATTENDANCE_DEDUCTION_LABEL_ABSENCE,
-        amount: absAmt.toFixed(2),
-      }),
-    );
-  }
-  if (hasLatLine) {
-    out.push(
-      newDeductionLine({
-        code: ATTENDANCE_DEDUCTION_LINE_CODE_LATENESS,
-        label: ATTENDANCE_DEDUCTION_LABEL_LATENESS,
-        amount: latAmt.toFixed(2),
-      }),
-    );
-  }
+  const out: DeductionLineDraft[] = [
+    ...base,
+    newDeductionLine({
+      code: ATTENDANCE_DEDUCTION_LINE_CODE_ABSENCE,
+      label: ATTENDANCE_DEDUCTION_LABEL_ABSENCE,
+      amount: absAmt.toFixed(2),
+    }),
+    newDeductionLine({
+      code: ATTENDANCE_DEDUCTION_LINE_CODE_LATENESS,
+      label: ATTENDANCE_DEDUCTION_LABEL_LATENESS,
+      amount: latAmt.toFixed(2),
+    }),
+  ];
 
   let kind: AttendanceMergeKind;
-  if (hasAbsLine && hasLatLine) kind = "applied_both";
-  else if (hasAbsLine) kind = "applied_absence_only";
-  else kind = "applied_lateness_only";
+  if (hasAbsMoney && hasLatMoney) kind = "applied_both";
+  else if (hasAbsMoney) kind = "applied_absence_only";
+  else if (hasLatMoney) kind = "applied_lateness_only";
+  else kind = "applied_both_zero";
 
   return { lines: out, kind };
 }
@@ -158,6 +146,11 @@ export function attendanceSuggestionMergeToast(
       return {
         title: "Sugerencia en el desglose",
         description: `Líneas orientativas según asistencia (faltas NJ: ${preview.absence_days_unjustified}, tardanzas NJ: ${preview.tardiness_events_unjustified}). Podés editar importes aquí; se aplican al guardar la boleta.`,
+      };
+    case "applied_both_zero":
+      return {
+        title: "Asistencia en el desglose",
+        description: `Faltas NJ: ${preview.absence_days_unjustified}, tardanzas NJ: ${preview.tardiness_events_unjustified}. Los importes sugeridos están en cero; las líneas se muestran igual para referencia.`,
       };
   }
 }

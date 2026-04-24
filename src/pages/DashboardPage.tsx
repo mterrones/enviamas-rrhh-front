@@ -7,6 +7,7 @@ import { Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { fetchDashboardSummary, fetchDashboardRecentAudit, type DashboardSummaryData } from "@/api/dashboardSummary";
 import { MonthlyHireExitFlowCard } from "@/components/reports/MonthlyHireExitFlowCard";
 import { PayrollPeriodAggregatesCard } from "@/components/reports/PayrollPeriodAggregatesCard";
+import { DashboardBirthdaysSection } from "@/components/dashboard/DashboardBirthdaysSection";
 import { useAuth } from "@/contexts/AuthContext";
 import type { AuditLogRow } from "@/api/auditLogs";
 import { ApiHttpError } from "@/api/client";
@@ -171,13 +172,13 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:items-stretch">
         {canPayrollAggregates ? (
-          <div className="lg:col-span-2">
-            <PayrollPeriodAggregatesCard limit={6} />
+          <div className="lg:col-span-2 min-h-0">
+            <PayrollPeriodAggregatesCard limit={12} />
           </div>
         ) : (
-          <Card className="lg:col-span-2 shadow-card">
+          <Card className="lg:col-span-2 shadow-card min-h-0">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Headcount — Últimos 6 meses</CardTitle>
             </CardHeader>
@@ -189,7 +190,16 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        <Card className="shadow-card">
+        <DashboardBirthdaysSection
+          loading={loading}
+          calendar={summary?.birthday_calendar}
+          upcoming={summary?.upcoming_birthdays}
+          className="min-h-0"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:items-stretch">
+        <Card className="shadow-card min-h-0">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Distribución por área</CardTitle>
           </CardHeader>
@@ -232,12 +242,12 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <MonthlyHireExitFlowCard title="Altas y bajas mensuales" months={6} />
+        <div className="min-h-0">
+          <MonthlyHireExitFlowCard title="Altas y bajas mensuales" months={6} />
+        </div>
 
-        <Card className="shadow-card">
+        <Card className="shadow-card min-h-0">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Contratos próximos a vencer</CardTitle>
             {summary != null && !loading ? (

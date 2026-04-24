@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Search, Filter, UserMinus } from "lucide-react";
+import { Search, Filter, UserMinus, Eye } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { fetchAllEmployees, fetchEmployeesPage, type Employee } from "@/api/empl
 import { fetchEmployeePhotoBlob } from "@/api/employeePhotos";
 import type { Department } from "@/api/departments";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 import { formatEmployeeName } from "@/lib/employeeName";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
@@ -103,7 +104,8 @@ function EmployeeListAvatar({
 }
 
 export default function EmployeesPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, user, startImpersonation } = useAuth();
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("todos");
@@ -119,6 +121,10 @@ export default function EmployeesPage() {
   const [employeeNameById, setEmployeeNameById] = useState<Map<number, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [impersonateLoadingUserId, setImpersonateLoadingUserId] = useState<number | null>(null);
+
+  const canOfferImpersonation =
+    (user?.rol === "superadmin_rrhh" || user?.rol === "admin_rrhh") && !user?.impersonation?.active;
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search), 350);
@@ -182,6 +188,27 @@ export default function EmployeesPage() {
   }, [load]);
 
   const deptNameById = new Map(departments.map((d) => [d.id, d.name]));
+
+  const handleImpersonate = async (userId: number) => {
+    setImpersonateLoadingUserId(userId);
+    try {
+      await startImpersonation(userId);
+      toast({
+        title: "Sesión de impersonación",
+        description: "Estás viendo la plataforma como el usuario vinculado a este empleado.",
+      });
+    } catch (e) {
+      const msg =
+        e instanceof ApiHttpError ? e.apiError?.message ?? e.message : "No se pudo iniciar la sesión como otro usuario";
+      toast({
+        title: "Impersonación no disponible",
+        description: typeof msg === "string" ? msg : "Error",
+        variant: "destructive",
+      });
+    } finally {
+      setImpersonateLoadingUserId(null);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -304,6 +331,20 @@ export default function EmployeesPage() {
                                 Editar
                               </Button>
                             </Link>
+                          ) : null}
+                          {canOfferImpersonation && emp.user_id != null && emp.user_id > 0 ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-primary text-xs gap-1"
+                              type="button"
+                              disabled={impersonateLoadingUserId === emp.user_id}
+                              title="Ver la aplicación con los permisos de la cuenta vinculada"
+                              onClick={() => void handleImpersonate(emp.user_id!)}
+                            >
+                              <Eye className="w-3.5 h-3.5 shrink-0" />
+                              Ver como
+                            </Button>
                           ) : null}
                         </div>
                       </td>

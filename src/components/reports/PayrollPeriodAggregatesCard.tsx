@@ -59,7 +59,7 @@ export function PayrollPeriodAggregatesCard({ limit = 6 }: PayrollPeriodAggregat
         ) : error ? (
           <p className="text-sm text-destructive py-6">{error}</p>
         ) : data == null || data.periods.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-8 text-center">No hay periodos de planilla.</p>
+          <p className="text-sm text-muted-foreground py-8 text-center">No hay boletas en el año actual para mostrar.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[480px]">

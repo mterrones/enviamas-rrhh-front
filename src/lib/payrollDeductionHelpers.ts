@@ -58,3 +58,34 @@ export function buildPayslipBreakdownMeta(lines: DeductionLineDraft[]) {
     },
   };
 }
+
+export function installmentLineCodeForPlan(planId: number): string {
+  return `installment:${planId}`;
+}
+
+export function draftHasInstallmentForPlan(lines: DeductionLineDraft[], planId: number): boolean {
+  return lines.some((l) => l.code === installmentLineCodeForPlan(planId));
+}
+
+export function isPrevisionalDeductionCode(code: string): boolean {
+  return code === "previsional" || code.startsWith("previsional_");
+}
+
+export function draftHasPrevisionalLine(lines: DeductionLineDraft[]): boolean {
+  return lines.some((l) => isPrevisionalDeductionCode(l.code));
+}
+
+export function draftHasIncomeTaxLine(lines: DeductionLineDraft[]): boolean {
+  return lines.some((l) => l.code === "income_tax" || l.code === "income_tax_5th");
+}
+
+export function deductionPlanCategoryLabelEs(category: string | null | undefined): string {
+  if (!category) return "";
+  const m: Record<string, string> = {
+    damage_equipment: "Daño a equipo",
+    salary_advance: "Adelanto de sueldo",
+    loan: "Préstamo",
+    other: "Otro",
+  };
+  return m[category] ?? category;
+}

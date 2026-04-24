@@ -30,6 +30,14 @@ export async function fetchPayrollPeriods() {
   return apiRequest<components["schemas"]["PayrollPeriodListEnvelope"]>("/payroll-periods");
 }
 
+export type PayslipYearsWithPayslipsEnvelope = {
+  data: { max_year_with_payslip: number | null };
+};
+
+export async function fetchPayslipYearsWithPayslips() {
+  return apiRequest<PayslipYearsWithPayslipsEnvelope>("/payslips/years-with-payslips");
+}
+
 export type PayrollPeriodCreateBody = components["schemas"]["PayrollPeriodWrite"];
 
 export async function createPayrollPeriod(body: PayrollPeriodCreateBody) {

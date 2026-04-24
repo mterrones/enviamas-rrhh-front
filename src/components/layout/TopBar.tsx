@@ -1,4 +1,4 @@
-import { Bell, LogOut, Menu } from "lucide-react";
+import { Bell, LogOut, Menu, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -20,8 +20,17 @@ export function TopBar({ onToggleSidebar }: Props) {
   const notificationsWrapRef = useRef<HTMLDivElement>(null);
   const { unreadCount } = useNotifications();
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, leaveImpersonation } = useAuth();
+  const [leavingImpersonation, setLeavingImpersonation] = useState(false);
   const initials = user?.nombre?.split(" ").map((n) => n[0]).join("").slice(0, 2) ?? "?";
+  const isImpersonating = Boolean(user?.impersonation?.active);
+
+  const handleLeaveImpersonation = () => {
+    setLeavingImpersonation(true);
+    void leaveImpersonation().finally(() => {
+      setLeavingImpersonation(false);
+    });
+  };
 
   useEffect(() => {
     if (!showNotifications) return;
@@ -56,6 +65,20 @@ export function TopBar({ onToggleSidebar }: Props) {
       </div>
 
       <div className="flex items-center gap-3">
+        {isImpersonating ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="default"
+            className="shrink-0 gap-1.5 font-semibold shadow-sm"
+            disabled={leavingImpersonation}
+            onClick={handleLeaveImpersonation}
+          >
+            <Undo2 className="w-4 h-4 shrink-0" />
+            <span className="hidden sm:inline">Volver a vista admin</span>
+            <span className="sm:hidden">Volver</span>
+          </Button>
+        ) : null}
         <RoleSwitcher />
 
         {/* Notifications */}
@@ -94,7 +117,17 @@ export function TopBar({ onToggleSidebar }: Props) {
               </div>
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuContent align="end" className="w-56">
+            {isImpersonating ? (
+              <DropdownMenuItem
+                className="cursor-pointer font-medium text-primary focus:text-primary"
+                disabled={leavingImpersonation}
+                onClick={handleLeaveImpersonation}
+              >
+                <Undo2 className="w-4 h-4 mr-2" />
+                Volver a vista admin
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem
               className="text-destructive cursor-pointer"
               onClick={async () => {

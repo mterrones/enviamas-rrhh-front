@@ -2744,6 +2744,12 @@ export interface components {
                 first_name: string;
                 last_name: string;
             };
+            impersonation?: {
+                active: boolean;
+                actor_id: number;
+                actor_name: string;
+                actor_email: string;
+            } | null;
         };
         UserMeEnvelope: {
             data: components["schemas"]["UserMe"];

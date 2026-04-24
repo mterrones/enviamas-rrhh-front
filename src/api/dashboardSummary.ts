@@ -1,6 +1,31 @@
 import { apiRequest } from "@/api/client";
 import type { AuditLogRow } from "@/api/auditLogs";
 
+export type DashboardBirthdayEmployee = {
+  id: number;
+  first_name: string;
+  last_name: string;
+};
+
+export type DashboardBirthdayMarkedDay = {
+  day: number;
+  employees: DashboardBirthdayEmployee[];
+};
+
+export type DashboardBirthdayCalendar = {
+  year: number;
+  month: number;
+  marked_days: DashboardBirthdayMarkedDay[];
+};
+
+export type DashboardUpcomingBirthday = {
+  employee_id: number;
+  first_name: string;
+  last_name: string;
+  next_birthday_date: string;
+  turning_age: number;
+};
+
 export type DashboardSummaryData = {
   active_employee_count: number;
   employees_by_department: {
@@ -20,6 +45,8 @@ export type DashboardSummaryData = {
     contract_type: string | null;
     days_remaining: number;
   }[];
+  birthday_calendar: DashboardBirthdayCalendar;
+  upcoming_birthdays: DashboardUpcomingBirthday[];
 };
 
 export type DashboardSummaryEnvelope = {
