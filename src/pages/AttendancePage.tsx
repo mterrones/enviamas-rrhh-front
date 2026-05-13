@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarCheck, FileSpreadsheet, FileText, Download, CalendarIcon, Pencil } from "lucide-react";
+import { CalendarCheck, FileSpreadsheet, FileText, Download, CalendarIcon, Pencil, CalendarDays, Palmtree } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format, differenceInCalendarDays } from "date-fns";
 import { formatAppDate } from "@/lib/formatAppDate";
@@ -1004,9 +1004,15 @@ export default function AttendancePage() {
       </div>
 
       <Tabs value={mainTab} onValueChange={setMainTab}>
-        <TabsList className="bg-card border border-border">
-          <TabsTrigger value="calendario">Calendario</TabsTrigger>
-          <TabsTrigger value="vacaciones">Vacaciones</TabsTrigger>
+        <TabsList className="bg-card border border-border flex-wrap h-auto gap-1 py-1">
+          <TabsTrigger value="calendario" className="gap-2">
+            <CalendarDays className="w-4 h-4 shrink-0" />
+            Calendario
+          </TabsTrigger>
+          <TabsTrigger value="vacaciones" className="gap-2">
+            <Palmtree className="w-4 h-4 shrink-0" />
+            Vacaciones
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="calendario" className="space-y-4 mt-4">

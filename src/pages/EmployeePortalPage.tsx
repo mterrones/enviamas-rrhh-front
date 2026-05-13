@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -65,6 +66,8 @@ import {
   type PortalResignationRequest,
   type VacationBalanceData,
 } from "@/api/portal";
+import { updateEmployee } from "@/api/employees";
+import { uploadEmployeeDocument, type EmployeeDocumentType } from "@/api/employeeDocuments";
 import { DEFAULT_LIST_PAGE_SIZE } from "@/constants/pagination";
 import {
   FileText,
@@ -77,6 +80,7 @@ import {
   Pencil,
   Trash2,
   Upload,
+  Info,
 } from "lucide-react";
 import { addDays, format, differenceInCalendarDays, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -223,6 +227,13 @@ function formatNotificationDate(iso: string | null): string {
 
 const portalBankCatalog = ["BCP", "BBVA", "Interbank", "Scotiabank", "BanBif", "Caja Arequipa"];
 const portalPensionCatalog = ["AFP Integra", "AFP Prima", "AFP Profuturo", "AFP Habitat", "ONP"];
+const portalEducationCatalog = ["Secundaria", "Técnico", "Universitario", "Postgrado"];
+
+type PortalSelfPdfKey = Extract<EmployeeDocumentType, "antecedentes" | "cv" | "medical_exam">;
+
+function emptyPortalSelfPdfFiles(): Record<PortalSelfPdfKey, File | null> {
+  return { antecedentes: null, cv: null, medical_exam: null };
+}
 
 const PORTAL_TAB_VALUES = new Set(["boletas", "asistencia", "solicitudes", "equipos", "datos", "notificaciones"]);
 
@@ -302,8 +313,15 @@ function portalCatalogExtra(value: string, known: string[]) {
 export default function EmployeePortalPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const hasEmployee = Boolean(user?.employee);
+  const selfEmployeeId = user?.employee?.id ?? null;
+  const canSelfEditPersonalInPortal = Boolean(
+    hasEmployee &&
+      selfEmployeeId != null &&
+      (hasPermission("employees.self_edit") ||
+        (user?.impersonation?.active === true && hasPermission("employees.edit"))),
+  );
   const isAdminRrhhRole = user?.rol === "superadmin_rrhh" || user?.rol === "admin_rrhh";
   const emptyStateNoEmployeeMessage =
     isAdminRrhhRole && !hasEmployee
@@ -311,6 +329,7 @@ export default function EmployeePortalPage() {
       : "Sin datos hasta vincular tu ficha de empleado.";
   const welcomeName = user?.nombre ?? "…";
   const hidePortalTabBar = user?.rol === "empleado";
+  const isImpersonating = user?.impersonation?.active === true;
 
   const [activeTab, setActiveTab] = useState("datos");
 
@@ -318,6 +337,8 @@ export default function EmployeePortalPage() {
   useEffect(() => {
     if (tabFromUrl && PORTAL_TAB_VALUES.has(tabFromUrl)) {
       setActiveTab(tabFromUrl);
+    } else {
+      setActiveTab("datos");
     }
   }, [tabFromUrl]);
 
@@ -334,7 +355,7 @@ export default function EmployeePortalPage() {
           }
           return p;
         },
-        { replace: true },
+        { replace: false },
       );
     },
     [setSearchParams],
@@ -428,6 +449,11 @@ export default function EmployeePortalPage() {
   const [profilePhotoObjectUrl, setProfilePhotoObjectUrl] = useState<string | null>(null);
   const [portalDocuments, setPortalDocuments] = useState<PortalEmployeeDocumentRow[]>([]);
   const [portalEmployeeDocDownloadingId, setPortalEmployeeDocDownloadingId] = useState<number | null>(null);
+  const [portalSelfDni, setPortalSelfDni] = useState("");
+  const [portalSelfBirthDate, setPortalSelfBirthDate] = useState("");
+  const [portalSelfEducation, setPortalSelfEducation] = useState("");
+  const [portalSelfDegree, setPortalSelfDegree] = useState("");
+  const [portalSelfPdfFiles, setPortalSelfPdfFiles] = useState<Record<PortalSelfPdfKey, File | null>>(emptyPortalSelfPdfFiles);
 
   const [notificationPage, setNotificationPage] = useState(1);
   const [notifications, setNotifications] = useState<PortalEmployeeNotification[]>([]);
@@ -800,6 +826,14 @@ export default function EmployeePortalPage() {
     }
   }, [hasEmployee, applyPortalContactResponse]);
 
+  useEffect(() => {
+    if (!canSelfEditPersonalInPortal || !portalPersonal) return;
+    setPortalSelfDni((portalPersonal.dni ?? "").trim());
+    setPortalSelfBirthDate(portalPersonal.birth_date ? portalPersonal.birth_date.slice(0, 10) : "");
+    setPortalSelfEducation(portalPersonal.education_level ?? "");
+    setPortalSelfDegree(portalPersonal.degree ?? "");
+  }, [canSelfEditPersonalInPortal, portalPersonal]);
+
   const handleDownloadPortalEmployeeDocument = useCallback(
     async (doc: PortalEmployeeDocumentRow) => {
       setPortalEmployeeDocDownloadingId(doc.id);
@@ -1090,8 +1124,39 @@ export default function EmployeePortalPage() {
       });
       return;
     }
+    if (canSelfEditPersonalInPortal && selfEmployeeId != null) {
+      const dniTrim = portalSelfDni.trim();
+      if (!dniTrim) {
+        toast({
+          title: "DNI requerido",
+          description: "Indica tu documento de identidad.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     setContactSaving(true);
     try {
+      let pdfUploadError = false;
+      if (canSelfEditPersonalInPortal && selfEmployeeId != null) {
+        await updateEmployee(selfEmployeeId, {
+          dni: portalSelfDni.trim(),
+          birth_date: portalSelfBirthDate.trim() || null,
+          education_level: portalSelfEducation.trim() || null,
+          degree: portalSelfDegree.trim() || null,
+        });
+        const pdfOrder: PortalSelfPdfKey[] = ["antecedentes", "cv", "medical_exam"];
+        for (const key of pdfOrder) {
+          const file = portalSelfPdfFiles[key];
+          if (!file) continue;
+          try {
+            await uploadEmployeeDocument(selfEmployeeId, key, file);
+          } catch {
+            pdfUploadError = true;
+          }
+        }
+      }
+
       const r = await patchPortalContact({
         phone: contactPhone.trim() || null,
         personal_email: emailTrim || null,
@@ -1102,7 +1167,21 @@ export default function EmployeePortalPage() {
         pension_fund: pensionFund.trim() || null,
       });
       applyPortalContactResponse(r.data);
-      toast({ title: "Datos actualizados", description: "Tu información se guardó correctamente." });
+      const docRes = await fetchPortalDocuments();
+      setPortalDocuments(docRes.data);
+      if (canSelfEditPersonalInPortal) {
+        setPortalSelfPdfFiles(emptyPortalSelfPdfFiles());
+      }
+      if (pdfUploadError) {
+        toast({
+          title: "Cambios guardados con avisos",
+          description:
+            "Los datos se guardaron, pero uno o más PDF personales no se pudieron subir. Vuelve a elegir el archivo y pulsa Guardar cambios.",
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Datos actualizados", description: "Tu información se guardó correctamente." });
+      }
     } catch (e) {
       const msg = requestErrorMessage(e);
       toast({ title: "No se pudo guardar", description: msg, variant: "destructive" });
@@ -1235,6 +1314,25 @@ export default function EmployeePortalPage() {
         <p className="text-muted-foreground text-sm mt-1">Bienvenido, {welcomeName}</p>
       </div>
 
+      {isImpersonating ? (
+        <Alert className="border-amber-500/40 bg-amber-500/10 dark:bg-amber-500/15">
+          <Info className="h-4 w-4 text-amber-700 dark:text-amber-400" />
+          <AlertTitle>Modo impersonación activo</AlertTitle>
+          <AlertDescription className="space-y-1.5">
+            <p>
+              Estás viendo la plataforma como <span className="font-medium text-foreground">{welcomeName}</span>. Los cambios que guardes
+              se aplicarán sobre ese perfil.
+            </p>
+            {user?.impersonation?.actor_name ? (
+              <p className="text-xs text-muted-foreground">
+                Sesión del administrador: {user.impersonation.actor_name}
+                {user.impersonation.actor_email ? ` · ${user.impersonation.actor_email}` : ""}
+              </p>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {!hasEmployee ? (
         isAdminRrhhRole ? (
           <p className="text-sm text-muted-foreground border border-border bg-muted/40 rounded-md px-4 py-3">
@@ -1331,29 +1429,75 @@ export default function EmployeePortalPage() {
                       </div>
                       <div className="space-y-2">
                         <Label>DNI</Label>
-                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.dni)} />
+                        {canSelfEditPersonalInPortal ? (
+                          <Input
+                            maxLength={16}
+                            value={portalSelfDni}
+                            onChange={(e) => setPortalSelfDni(e.target.value)}
+                            placeholder="Ej: 72345678"
+                            autoComplete="off"
+                          />
+                        ) : (
+                          <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.dni)} />
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label>Fecha de nacimiento</Label>
-                        <Input
-                          readOnly
-                          className={cn(portalReadonlyFieldClass)}
-                          value={portalPersonal.birth_date ? formatAppDate(portalPersonal.birth_date) : ""}
-                          placeholder="—"
-                        />
+                        {canSelfEditPersonalInPortal ? (
+                          <Input type="date" value={portalSelfBirthDate} onChange={(e) => setPortalSelfBirthDate(e.target.value)} />
+                        ) : (
+                          <Input
+                            readOnly
+                            className={cn(portalReadonlyFieldClass)}
+                            value={portalPersonal.birth_date ? formatAppDate(portalPersonal.birth_date) : ""}
+                            placeholder="—"
+                          />
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label>Nivel de estudios</Label>
-                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.education_level)} />
+                        {canSelfEditPersonalInPortal ? (
+                          <Select value={portalSelfEducation || undefined} onValueChange={(v) => setPortalSelfEducation(v)}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Seleccionar" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {portalCatalogExtra(portalSelfEducation, portalEducationCatalog)}
+                              {portalEducationCatalog.map((x) => (
+                                <SelectItem key={x} value={x}>
+                                  {x}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.education_level)} />
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label>Carrera / Especialidad</Label>
-                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.degree)} />
+                        {canSelfEditPersonalInPortal ? (
+                          <Input
+                            value={portalSelfDegree}
+                            onChange={(e) => setPortalSelfDegree(e.target.value)}
+                            placeholder="Ej: Ing. Sistemas"
+                          />
+                        ) : (
+                          <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.degree)} />
+                        )}
                       </div>
                     </div>
+                    {canSelfEditPersonalInPortal ? (
+                      <p className="text-xs text-muted-foreground">
+                        Los cambios de esta sección se guardan con el botón <span className="font-medium text-foreground">Guardar cambios</span>{" "}
+                        al final de la página.
+                      </p>
+                    ) : null}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
                       {portalPersonalPdfSlots.map((slot) => {
                         const doc = portalDocByType.get(slot.type);
+                        const pdfKey = slot.type as PortalSelfPdfKey;
+                        const pendingFile = canSelfEditPersonalInPortal ? portalSelfPdfFiles[pdfKey] : null;
                         return (
                           <div key={slot.type} className="space-y-2">
                             <Label>{slot.label}</Label>
@@ -1375,6 +1519,23 @@ export default function EmployeePortalPage() {
                             ) : (
                               <p className="text-sm text-muted-foreground">Sin archivo registrado.</p>
                             )}
+                            {canSelfEditPersonalInPortal ? (
+                              <div className="space-y-1">
+                                <Input
+                                  type="file"
+                                  accept=".pdf,application/pdf"
+                                  className="cursor-pointer text-xs h-auto py-2"
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0] ?? null;
+                                    e.target.value = "";
+                                    setPortalSelfPdfFiles((prev) => ({ ...prev, [pdfKey]: f }));
+                                  }}
+                                />
+                                {pendingFile ? (
+                                  <p className="text-xs text-muted-foreground truncate">Se subirá al guardar: {pendingFile.name}</p>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         );
                       })}

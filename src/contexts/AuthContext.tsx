@@ -99,6 +99,7 @@ const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
   jefe_area: [
     "dashboard.view",
     "employees.view",
+    "employees.self_edit",
     "attendance.view", "attendance.approve",
     "payroll.view",
     "portal.view",
@@ -107,6 +108,7 @@ const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
   ],
   empleado: [
     "portal.view",
+    "employees.self_edit",
   ],
 };
 
@@ -178,10 +180,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hasPermission = useCallback(
     (permission: string) => {
       if (!user) return false;
-      if (user.permissions !== undefined) {
-        return user.permissions.includes(permission);
+      const fromApi = user.permissions;
+      const impersonating = user.impersonation?.active === true;
+      if (impersonating) {
+        return Array.isArray(fromApi) && fromApi.includes(permission);
       }
-      return ROLE_PERMISSIONS[user.rol]?.includes(permission) ?? false;
+      const roleDefaults = ROLE_PERMISSIONS[user.rol] ?? [];
+      if (fromApi !== undefined) {
+        return fromApi.includes(permission) || roleDefaults.includes(permission);
+      }
+      return roleDefaults.includes(permission);
     },
     [user],
   );

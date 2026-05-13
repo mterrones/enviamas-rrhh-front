@@ -17,7 +17,6 @@ import {
   Laptop,
   User,
   Bell,
-  Percent,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -30,11 +29,10 @@ type NavLinkItem = {
 };
 
 const navItemsBeforePortal: NavLinkItem[] = [
-  { label: "Dashboard", icon: LayoutDashboard, path: "/", permission: "dashboard.view" },
+  { label: "Inicio", icon: LayoutDashboard, path: "/", permission: "dashboard.view" },
   { label: "Empleados", icon: Users, path: "/empleados", permission: "employees.view" },
   { label: "Asistencia", icon: CalendarCheck, path: "/asistencia", permission: "attendance.view" },
   { label: "Boletas y Nómina", icon: FileText, path: "/boletas", permission: "payroll.view" },
-  { label: "Descuentos", icon: Percent, path: "/descuentos", permission: "payroll.view" },
 ];
 
 const portalSingleItem: NavLinkItem = {
@@ -75,10 +73,15 @@ export function AppSidebar({ collapsed, onToggle }: Props) {
   const location = useLocation();
   const { hasPermission, user } = useAuth();
 
-  const beforePortal = navItemsBeforePortal.filter((item) => hasPermission(item.permission));
-  const afterPortal = navItemsAfterPortal.filter((item) => hasPermission(item.permission));
+  const isImpersonating = Boolean(user?.impersonation?.active);
+  const beforePortal = isImpersonating
+    ? []
+    : navItemsBeforePortal.filter((item) => hasPermission(item.permission));
+  const afterPortal = isImpersonating
+    ? []
+    : navItemsAfterPortal.filter((item) => hasPermission(item.permission));
   const showPortal = hasPermission("portal.view");
-  const portalAsEmployeeModules = user?.rol === "empleado";
+  const portalAsEmployeeModules = user?.rol === "empleado" || isImpersonating;
 
   return (
     <aside

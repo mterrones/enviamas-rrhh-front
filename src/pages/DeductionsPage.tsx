@@ -34,6 +34,7 @@ import {
 } from "@/api/payroll";
 import { formatEmployeeName } from "@/lib/employeeName";
 import { deductionPlanCategoryLabelEs } from "@/lib/payrollDeductionHelpers";
+import { normalizeMoneyDecimalInput } from "@/lib/moneyDecimalInput";
 import { useAuth } from "@/contexts/AuthContext";
 import { Download, FileUp, Loader2, Pencil, Trash2, XCircle } from "lucide-react";
 
@@ -78,7 +79,11 @@ function formatPen(amount: string): string {
   return `S/ ${n.toFixed(2)}`;
 }
 
-export default function DeductionsPage() {
+export type DeductionsPageProps = {
+  embedded?: boolean;
+};
+
+export default function DeductionsPage({ embedded = false }: DeductionsPageProps) {
   const { toast } = useToast();
   const { hasPermission } = useAuth();
   const canManage = hasPermission("payroll.generate");
@@ -345,13 +350,20 @@ export default function DeductionsPage() {
         onChange={onEvidenceFile}
       />
 
-      <div>
-        <h1 className="text-2xl font-bold">Descuentos</h1>
-        <p className="text-muted-foreground text-sm mt-1">
+      {!embedded ? (
+        <div>
+          <h1 className="text-2xl font-bold">Descuentos</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Planes de descuento en cuotas por empleado. Las cuotas se aplican al aprobar boletas con código{" "}
+            <span className="font-mono text-xs">installment:ID</span>.
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
           Planes de descuento en cuotas por empleado. Las cuotas se aplican al aprobar boletas con código{" "}
           <span className="font-mono text-xs">installment:ID</span>.
         </p>
-      </div>
+      )}
 
       <Card className="shadow-card">
         <CardHeader>
@@ -559,7 +571,13 @@ export default function DeductionsPage() {
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
                 <Label>Monto total (PEN) *</Label>
-                <Input value={createTotal} onChange={(e) => setCreateTotal(e.target.value)} placeholder="600.00" />
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={createTotal}
+                  onChange={(e) => setCreateTotal(normalizeMoneyDecimalInput(e.target.value))}
+                  placeholder="600.00"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>N.° cuotas *</Label>

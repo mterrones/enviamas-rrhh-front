@@ -34,6 +34,7 @@ import { createUserInvitation, fetchUsersPage, setUserActive, updateUser, type U
 import { ROLE_LABELS, type AppRole, useAuth } from "@/contexts/AuthContext";
 import { DEFAULT_LIST_PAGE_SIZE } from "@/constants/pagination";
 import { formatAppDateTime } from "@/lib/formatAppDate";
+import { normalizeMoneyDecimalInput } from "@/lib/moneyDecimalInput";
 
 function formatAuditDate(iso: string | null): string {
   return formatAppDateTime(iso);
@@ -577,8 +578,10 @@ export default function SettingsPage() {
     }
   }, [hasPermission, legalParams, legalDrafts, legalAt, toast, loadLegalParams]);
 
-  const handleLegalDraftChange = useCallback((key: string, value: string) => {
-    setLegalDrafts((prev) => ({ ...prev, [key]: value }));
+  const handleLegalDraftChange = useCallback((key: string, value: string, unit: string) => {
+    const next =
+      unit === "pen" || unit === "percent" ? normalizeMoneyDecimalInput(value) : value;
+    setLegalDrafts((prev) => ({ ...prev, [key]: next }));
     setLegalValidationErrorKey((cur) => (cur === key ? null : cur));
   }, []);
 
@@ -1309,7 +1312,7 @@ export default function SettingsPage() {
                       ) : null}
                       <Input
                         value={draftVal}
-                        onChange={(e) => handleLegalDraftChange(p.key, e.target.value)}
+                        onChange={(e) => handleLegalDraftChange(p.key, e.target.value, p.unit)}
                         placeholder={p.unit === "pen" ? "0.00" : "0.00–1"}
                         inputMode="decimal"
                         disabled={legalSaving}
@@ -1644,7 +1647,13 @@ export default function SettingsPage() {
                     <Label className="text-sm">Nuevo valor</Label>
                     <Input
                       value={legalVigenciaNewValue}
-                      onChange={(e) => setLegalVigenciaNewValue(e.target.value)}
+                      onChange={(e) =>
+                        setLegalVigenciaNewValue(
+                          legalVigenciaParam.unit === "pen" || legalVigenciaParam.unit === "percent"
+                            ? normalizeMoneyDecimalInput(e.target.value)
+                            : e.target.value,
+                        )
+                      }
                       placeholder={legalVigenciaParam.unit === "pen" ? "0.00" : "0.00–1"}
                       inputMode="decimal"
                       disabled={legalVigenciaSaving}

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -8,15 +8,15 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { InactivitySessionWatcher } from "@/components/auth/InactivitySessionWatcher";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { RequirePermission } from "@/components/auth/RequirePermission";
+import { RequireAnyPermission } from "@/components/auth/RequireAnyPermission";
 import { HomeEntry } from "@/components/auth/HomeEntry";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 import EmployeesPage from "./pages/EmployeesPage";
-import EmployeeProfilePage from "./pages/EmployeeProfilePage";
+import EmployeeProfileRoute from "./pages/EmployeeProfileRoute";
 import NewEmployeePage from "./pages/NewEmployeePage";
 import EditEmployeePage from "./pages/EditEmployeePage";
 import AttendancePage from "./pages/AttendancePage";
 import PayrollPage from "./pages/PayrollPage";
-import DeductionsPage from "./pages/DeductionsPage";
 import EmployeePortalPage from "./pages/EmployeePortalPage";
 import ResignationRequestsPage from "./pages/ResignationRequestsPage";
 import AssetsPage from "./pages/AssetsPage";
@@ -28,6 +28,17 @@ import InviteAcceptPage from "./pages/InviteAcceptPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
+
+function DeductionsLegacyRedirect() {
+  const [sp] = useSearchParams();
+  const employee = sp.get("employee");
+  const next = new URLSearchParams();
+  next.set("tab", "descuentos");
+  if (employee != null && /^\d+$/.test(employee.trim())) {
+    next.set("employee", employee.trim());
+  }
+  return <Navigate to={`/boletas?${next.toString()}`} replace />;
+}
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -72,17 +83,17 @@ const App = () => (
               <Route
                 path="/empleados/:id/edit"
                 element={
-                  <RequirePermission permission="employees.edit">
+                  <RequireAnyPermission permissions={["employees.edit", "employees.self_edit"]}>
                     <EditEmployeePage />
-                  </RequirePermission>
+                  </RequireAnyPermission>
                 }
               />
               <Route
                 path="/empleados/:id"
                 element={
-                  <RequirePermission permission="employees.view">
-                    <EmployeeProfilePage />
-                  </RequirePermission>
+                  <RequireAnyPermission permissions={["employees.view", "employees.self_edit"]}>
+                    <EmployeeProfileRoute />
+                  </RequireAnyPermission>
                 }
               />
               <Route
@@ -105,7 +116,7 @@ const App = () => (
                 path="/descuentos"
                 element={
                   <RequirePermission permission="payroll.view">
-                    <DeductionsPage />
+                    <DeductionsLegacyRedirect />
                   </RequirePermission>
                 }
               />

@@ -22,7 +22,9 @@ import { uploadEmployeeDocument, type EmployeeDocumentType } from "@/api/employe
 import { fetchEmployeePhotoBlob, uploadEmployeePhoto } from "@/api/employeePhotos";
 import type { components } from "@/api/contracts";
 import { formatEmployeeName } from "@/lib/employeeName";
+import { normalizeMoneyDecimalInput } from "@/lib/moneyDecimalInput";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 type FormDocumentSlot = Extract<
   EmployeeDocumentType,
@@ -249,6 +251,23 @@ function buildPayloadForUpdate(form: FormState, lockIdentityFields: boolean): Pa
   return payload;
 }
 
+function buildPayloadForSelfServiceUpdate(form: FormState): Partial<EmployeeWrite> {
+  return {
+    dni: form.dni.trim(),
+    birth_date: form.fechaNacimiento || null,
+    education_level: form.nivelEstudios || null,
+    degree: form.carrera || null,
+    phone: form.telefono || null,
+    personal_email: form.correoPersonal.trim() || null,
+    address: form.direccion || null,
+    emergency_contact_name: form.contactoEmergenciaNombre || null,
+    emergency_contact_phone: form.contactoEmergenciaTelefono || null,
+    bank: form.banco || null,
+    bank_account: form.numeroCuenta || null,
+    pension_fund: form.prevision || null,
+  };
+}
+
 type EmployeeFormPageProps = {
   mode: EmployeeFormMode;
   employeeId?: number;
@@ -257,6 +276,7 @@ type EmployeeFormPageProps = {
 export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user, hasPermission } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | null>(null);
   const [fotoPreview, setFotoPreview] = useState<string | null>(null);
@@ -283,6 +303,15 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
   const [saving, setSaving] = useState(false);
   const [pendingDocuments, setPendingDocuments] = useState(emptyPendingDocuments);
   const [hasLinkedUserAccount, setHasLinkedUserAccount] = useState(false);
+
+  const isSelfServiceLaborOnly = useMemo(() => {
+    if (mode !== "edit" || employeeId == null || user?.employee?.id == null) return false;
+    if (user.employee.id !== employeeId) return false;
+    return hasPermission("employees.self_edit") && !hasPermission("employees.edit");
+  }, [mode, employeeId, user?.employee?.id, hasPermission]);
+
+  const identityLocked = mode === "edit" && hasLinkedUserAccount;
+  const laborFieldsLocked = isSelfServiceLaborOnly;
 
   const handlePendingDocChange = (slot: FormDocumentSlot) => (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
@@ -385,25 +414,29 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
           }
         }
 
-        const emps = await fetchAllEmployees();
-        if (cancelled) return;
-        let list = emps
-          .filter((x) => x.id !== employeeId)
-          .map((x) => ({ id: x.id, first_name: x.first_name, last_name: x.last_name }));
+        if (isSelfServiceLaborOnly) {
+          if (!cancelled) setManagers([]);
+        } else {
+          const emps = await fetchAllEmployees();
+          if (cancelled) return;
+          let list = emps
+            .filter((x) => x.id !== employeeId)
+            .map((x) => ({ id: x.id, first_name: x.first_name, last_name: x.last_name }));
 
-        if (e.manager_id != null && !list.some((m) => m.id === e.manager_id)) {
-          try {
-            const mgr = await fetchEmployee(e.manager_id);
-            if (!cancelled)
-              list = [
-                ...list,
-                { id: mgr.data.id, first_name: mgr.data.first_name, last_name: mgr.data.last_name },
-              ];
-          } catch {
-            /* omit */
+          if (e.manager_id != null && !list.some((m) => m.id === e.manager_id)) {
+            try {
+              const mgr = await fetchEmployee(e.manager_id);
+              if (!cancelled)
+                list = [
+                  ...list,
+                  { id: mgr.data.id, first_name: mgr.data.first_name, last_name: mgr.data.last_name },
+                ];
+            } catch {
+              /* omit */
+            }
           }
+          if (!cancelled) setManagers(list);
         }
-        if (!cancelled) setManagers(list);
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof ApiHttpError ? err.apiError?.message ?? err.message : "No se pudo cargar el empleado";
@@ -417,7 +450,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [mode, employeeId, reloadKey, setPreviewUrl]);
+  }, [mode, employeeId, reloadKey, setPreviewUrl, isSelfServiceLaborOnly]);
 
   const update = (key: string, value: string) => setForm((prev) => ({ ...prev, [key]: value }));
 
@@ -445,8 +478,6 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
     const dept = departments.find((d) => String(d.id) === form.departmentId);
     return (dept?.positions ?? []).map((p) => p.name);
   }, [form.departmentId, departments]);
-
-  const identityLocked = mode === "edit" && hasLinkedUserAccount;
 
   const handleSave = async () => {
     if (!form.nombre.trim() || !form.apellido.trim() || !form.dni.trim()) {
@@ -490,13 +521,14 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
         }
         navigate(`/empleados/${newId}`);
       } else if (employeeId != null) {
-        const payload = buildPayloadForUpdate(form, identityLocked);
+        const payload = laborFieldsLocked ? buildPayloadForSelfServiceUpdate(form) : buildPayloadForUpdate(form, identityLocked);
         await updateEmployee(employeeId, payload);
-        const failed = await uploadPendingEmployeeDocuments(employeeId, pendingDocuments);
+        const docPayload = laborFieldsLocked ? { ...pendingDocuments, contract: null } : pendingDocuments;
+        const failed = await uploadPendingEmployeeDocuments(employeeId, docPayload);
         setPendingDocuments(emptyPendingDocuments());
         let photoUploadFailed = false;
         let photoErrorDetail: string | null = null;
-        if (fotoFile && !identityLocked) {
+        if (fotoFile && !identityLocked && !laborFieldsLocked) {
           try {
             await uploadEmployeePhoto(employeeId, fotoFile);
           } catch (e) {
@@ -533,6 +565,9 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
   };
 
   const isBusyInitial = mode === "edit" && (recordLoading || catalogLoading);
+  const listBackHref = hasPermission("employees.view") ? "/empleados" : user?.employee?.id != null ? `/empleados/${user.employee.id}` : "/portal";
+  const formBackHref = mode === "edit" && employeeId != null ? `/empleados/${employeeId}` : listBackHref;
+  const listBackLabel = hasPermission("employees.view") ? "Volver a empleados" : "Volver";
   const estadoLabel = mode === "create" ? "Estado inicial" : "Estado";
   const primaryCta = mode === "create" ? "Guardar Empleado" : "Guardar cambios";
   const title = mode === "create" ? "Nuevo Empleado" : "Editar empleado";
@@ -542,9 +577,9 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
   if (mode === "edit" && recordError) {
     return (
       <div className="space-y-6 animate-fade-in">
-        <Link to="/empleados">
+        <Link to={listBackHref}>
           <Button variant="ghost" size="sm" className="gap-2">
-            <ArrowLeft className="w-4 h-4" /> Volver a empleados
+            <ArrowLeft className="w-4 h-4" /> {listBackLabel}
           </Button>
         </Link>
         <Card className="shadow-card">
@@ -569,9 +604,9 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center gap-4">
-        <Link to={mode === "edit" && employeeId != null ? `/empleados/${employeeId}` : "/empleados"}>
+        <Link to={formBackHref}>
           <Button variant="ghost" size="sm" className="gap-2">
-            <ArrowLeft className="w-4 h-4" /> {mode === "edit" ? "Volver al perfil" : "Volver a empleados"}
+            <ArrowLeft className="w-4 h-4" /> {mode === "edit" ? "Volver al perfil" : listBackLabel}
           </Button>
         </Link>
       </div>
@@ -603,7 +638,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                     <Upload className="w-6 h-6 text-muted-foreground" />
                   )}
                 </div>
-                {!identityLocked ? (
+                {!identityLocked && !laborFieldsLocked ? (
                   <>
                     <input
                       type="file"
@@ -658,7 +693,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                 </div>
                 <div className="space-y-2">
                   <Label>DNI</Label>
-                  <Input placeholder="Ej: 72345678" maxLength={16} value={form.dni} onChange={(e) => update("dni", e.target.value)} />
+                  <Input placeholder="Ej: 72345678" maxLength={16} value={form.dni} readOnly={laborFieldsLocked} className={cn(laborFieldsLocked && "bg-muted")} onChange={(e) => update("dni", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>Fecha de nacimiento</Label>
@@ -666,7 +701,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                 </div>
                 <div className="space-y-2">
                   <Label>Nivel de estudios</Label>
-                  <Select value={form.nivelEstudios} onValueChange={(v) => update("nivelEstudios", v)}>
+                  <Select value={form.nivelEstudios || undefined} onValueChange={(v) => update("nivelEstudios", v)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar" />
                     </SelectTrigger>
@@ -829,7 +864,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Área</Label>
-                  <Select value={form.departmentId} onValueChange={updateDepartmentId} disabled={catalogLoading}>
+                  <Select value={form.departmentId} onValueChange={updateDepartmentId} disabled={catalogLoading || laborFieldsLocked}>
                     <SelectTrigger>
                       <SelectValue placeholder={catalogLoading ? "Cargando áreas…" : "Seleccionar área"} />
                     </SelectTrigger>
@@ -848,7 +883,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                   <Select
                     value={form.puesto}
                     onValueChange={(v) => update("puesto", v)}
-                    disabled={catalogLoading || form.departmentId === "__no_dept__"}
+                    disabled={catalogLoading || form.departmentId === "__no_dept__" || laborFieldsLocked}
                   >
                     <SelectTrigger>
                       <SelectValue
@@ -871,7 +906,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                 </div>
                 <div className="space-y-2">
                   <Label>Modalidad</Label>
-                  <Select value={form.modalidad} onValueChange={(v) => update("modalidad", v)}>
+                  <Select value={form.modalidad} onValueChange={(v) => update("modalidad", v)} disabled={laborFieldsLocked}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar" />
                     </SelectTrigger>
@@ -887,11 +922,19 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                 </div>
                 <div className="space-y-2">
                   <Label>Sueldo (S/)</Label>
-                  <Input type="number" placeholder="Ej: 2500" value={form.sueldo} onChange={(e) => update("sueldo", e.target.value)} />
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Ej: 2500"
+                    value={form.sueldo}
+                    onChange={(e) => update("sueldo", normalizeMoneyDecimalInput(e.target.value))}
+                    readOnly={laborFieldsLocked}
+                    className={cn(laborFieldsLocked && "bg-muted")}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Tipo de contrato</Label>
-                  <Select value={form.tipoContrato} onValueChange={(v) => update("tipoContrato", v)}>
+                  <Select value={form.tipoContrato} onValueChange={(v) => update("tipoContrato", v)} disabled={laborFieldsLocked}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar" />
                     </SelectTrigger>
@@ -907,15 +950,15 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                 </div>
                 <div className="space-y-2">
                   <Label>Fecha de inicio</Label>
-                  <Input type="date" value={form.fechaInicio} onChange={(e) => update("fechaInicio", e.target.value)} />
+                  <Input type="date" value={form.fechaInicio} readOnly={laborFieldsLocked} className={cn(laborFieldsLocked && "bg-muted")} onChange={(e) => update("fechaInicio", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>Fecha fin de contrato</Label>
-                  <Input type="date" value={form.fechaFin} onChange={(e) => update("fechaFin", e.target.value)} />
+                  <Input type="date" value={form.fechaFin} readOnly={laborFieldsLocked} className={cn(laborFieldsLocked && "bg-muted")} onChange={(e) => update("fechaFin", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>Jefe directo</Label>
-                  <Select value={form.managerId} onValueChange={(v) => update("managerId", v)} disabled={catalogLoading}>
+                  <Select value={form.managerId} onValueChange={(v) => update("managerId", v)} disabled={catalogLoading || laborFieldsLocked}>
                     <SelectTrigger>
                       <SelectValue placeholder={catalogLoading ? "Cargando…" : "Seleccionar jefe"} />
                     </SelectTrigger>
@@ -931,7 +974,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                 </div>
                 <div className="space-y-2">
                   <Label>{estadoLabel}</Label>
-                  <Select value={form.estado} onValueChange={(v) => update("estado", v)}>
+                  <Select value={form.estado} onValueChange={(v) => update("estado", v)} disabled={laborFieldsLocked}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar" />
                     </SelectTrigger>
@@ -951,6 +994,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                   type="file"
                   accept=".pdf,application/pdf"
                   className="cursor-pointer max-w-md"
+                  disabled={laborFieldsLocked}
                   onChange={handlePendingDocChange("contract")}
                 />
                 {pendingDocuments.contract ? (
@@ -961,7 +1005,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
           </Card>
 
           <div className="flex justify-end gap-3 pb-6">
-            <Link to={mode === "edit" && employeeId != null ? `/empleados/${employeeId}` : "/empleados"}>
+            <Link to={formBackHref}>
               <Button variant="outline">Cancelar</Button>
             </Link>
             <Button className="gap-2" onClick={handleSave} disabled={saving}>

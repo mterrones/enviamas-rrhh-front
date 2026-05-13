@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FileText, Download, Send, Plus, Pencil, Trash2, CheckCircle2, ClipboardList } from "lucide-react";
+import { FileText, Download, Send, Plus, Pencil, Trash2, CheckCircle2, ClipboardList, CircleDollarSign, Percent } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import {
   AlertDialog,
@@ -45,6 +47,9 @@ import {
   type PrevisionalPreviewData,
   type DeductionInstallmentPlan,
 } from "@/api/payroll";
+import { fetchEmployeeSalaryEffective } from "@/api/salaryRevisions";
+import { PayrollSalariesTab } from "@/components/payroll/PayrollSalariesTab";
+import DeductionsPage from "./DeductionsPage";
 import {
   type DeductionLineDraft,
   newDeductionLine,
@@ -64,6 +69,7 @@ import { ListPaginationBar } from "@/components/ListPaginationBar";
 import { DEFAULT_LIST_PAGE_SIZE } from "@/constants/pagination";
 import { formatEmployeeName } from "@/lib/employeeName";
 import { formatAppDate, formatAppMonthYear } from "@/lib/formatAppDate";
+import { normalizeMoneyDecimalInput } from "@/lib/moneyDecimalInput";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -205,6 +211,25 @@ export default function PayrollPage() {
   const canGeneratePayroll = hasPermission("payroll.generate");
   const canExportPayrollSummary = hasPermission("reports.export") && hasPermission("payroll.view");
   const canSendPayslipNotification = hasPermission("payroll.send") && hasPermission("payroll.view");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const payrollModuleTab = useMemo((): "boletas" | "sueldos" | "descuentos" => {
+    const t = searchParams.get("tab");
+    if (t === "sueldos" || t === "descuentos") return t;
+    return "boletas";
+  }, [searchParams]);
+
+  const onPayrollModuleTabChange = useCallback(
+    (v: string) => {
+      if (v === "boletas" || v === "sueldos" || v === "descuentos") {
+        const next = new URLSearchParams(searchParams);
+        if (v === "boletas") next.delete("tab");
+        else next.set("tab", v);
+        setSearchParams(next, { replace: true });
+      }
+    },
+    [setSearchParams, searchParams],
+  );
+
   const payslipTableColSpan = canGeneratePayroll ? 6 : 5;
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
@@ -431,23 +456,44 @@ export default function PayrollPage() {
     setCreateDeductionLines([]);
     setCreateAttendancePreview(null);
     const id = Number.parseInt(value, 10);
-    let grossStr = "";
-    if (!Number.isNaN(id)) {
-      const emp = employeeById[id];
-      const raw = emp?.salary;
-      if (raw != null && String(raw).trim() !== "") {
-        const n = Number.parseFloat(String(raw).replace(",", "."));
-        grossStr = Number.isNaN(n) ? "0.00" : n.toFixed(2);
-      } else {
-        grossStr = "0.00";
-      }
-      void fetchDeductionInstallmentPlans(id, { status: "active" })
-        .then((r) => setCreateInstallmentPlans(r.data))
-        .catch(() => setCreateInstallmentPlans([]));
-    } else {
+    if (Number.isNaN(id)) {
       setCreateInstallmentPlans([]);
+      setPayslipGross("");
+      return;
     }
-    setPayslipGross(grossStr);
+    const emp = employeeById[id];
+    let grossStr = "";
+    const raw = emp?.salary;
+    if (raw != null && String(raw).trim() !== "") {
+      const n = Number.parseFloat(String(raw).replace(",", "."));
+      grossStr = Number.isNaN(n) ? "0.00" : n.toFixed(2);
+    } else {
+      grossStr = "0.00";
+    }
+    void fetchDeductionInstallmentPlans(id, { status: "active" })
+      .then((r) => setCreateInstallmentPlans(r.data))
+      .catch(() => setCreateInstallmentPlans([]));
+
+    const period = periods.find((p) => String(p.id) === selectedPeriodId);
+    if (!period) {
+      setPayslipGross(grossStr);
+      return;
+    }
+    void fetchEmployeeSalaryEffective(id, period.year, period.month)
+      .then((eff) => {
+        const amt = eff.data.amount;
+        if (amt != null && String(amt).trim() !== "") {
+          const n = Number.parseFloat(String(amt).replace(",", "."));
+          if (!Number.isNaN(n) && n > 0) {
+            setPayslipGross(n.toFixed(2));
+            return;
+          }
+        }
+        setPayslipGross(grossStr);
+      })
+      .catch(() => {
+        setPayslipGross(grossStr);
+      });
   };
 
   useEffect(() => {
@@ -760,7 +806,7 @@ export default function PayrollPage() {
       plansData = [];
     }
     setEditPayslipTarget(p);
-    setEditPayslipGross(String(p.gross_amount));
+    setEditPayslipGross(normalizeMoneyDecimalInput(String(p.gross_amount)));
     setEditPayslipDeductions(String(p.deductions_amount));
     setEditPayslipNet(String(p.net_amount));
     const fromMeta = deductionLinesFromPayslipMeta(p.meta);
@@ -782,9 +828,10 @@ export default function PayrollPage() {
   };
 
   const handleEditPayslipGrossChange = (value: string) => {
-    setEditPayslipGross(value);
+    const v = normalizeMoneyDecimalInput(value);
+    setEditPayslipGross(v);
     const sum = sumDeductionLineAmounts(editDeductionLines);
-    applyEditNetFromGrossDeductions(value, sum.toFixed(2));
+    applyEditNetFromGrossDeductions(v, sum.toFixed(2));
   };
 
   useEffect(() => {
@@ -846,7 +893,7 @@ export default function PayrollPage() {
       const r = await applyPrevisionalToPayslip(editPayslipTarget.id);
       setEditPayslipTarget(r.data);
       setEditDeductionLines(deductionLinesFromPayslipMeta(r.data.meta));
-      setEditPayslipGross(String(r.data.gross_amount));
+      setEditPayslipGross(normalizeMoneyDecimalInput(String(r.data.gross_amount)));
       setEditPayslipDeductions(String(r.data.deductions_amount));
       setEditPayslipNet(String(r.data.net_amount));
       toast({ title: "Previsional aplicado", description: "Se actualizó la línea AFP/ONP en el desglose." });
@@ -1174,6 +1221,22 @@ export default function PayrollPage() {
         </div>
       </div>
 
+      <Tabs value={payrollModuleTab} onValueChange={onPayrollModuleTabChange}>
+        <TabsList className="w-full sm:w-auto flex-wrap h-auto gap-1 py-1">
+          <TabsTrigger value="boletas" className="gap-2">
+            <FileText className="w-4 h-4 shrink-0" />
+            Boletas
+          </TabsTrigger>
+          <TabsTrigger value="sueldos" className="gap-2">
+            <CircleDollarSign className="w-4 h-4 shrink-0" />
+            Sueldos
+          </TabsTrigger>
+          <TabsTrigger value="descuentos" className="gap-2">
+            <Percent className="w-4 h-4 shrink-0" />
+            Descuentos
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="boletas" className="space-y-6 mt-4 outline-none">
       <div className="flex gap-3 flex-wrap items-end">
         <div className="flex gap-2 flex-wrap items-end">
           <div className="space-y-1.5">
@@ -1615,6 +1678,19 @@ export default function PayrollPage() {
           ) : null}
         </CardContent>
       </Card>
+        </TabsContent>
+        <TabsContent value="sueldos" className="space-y-6 mt-4 outline-none">
+          <PayrollSalariesTab
+            employeesList={employeesList}
+            canView={hasPermission("payroll.view")}
+            canEdit={canGeneratePayroll}
+            onRevisionsChanged={() => void loadCatalog()}
+          />
+        </TabsContent>
+        <TabsContent value="descuentos" className="space-y-6 mt-4 outline-none">
+          <DeductionsPage embedded />
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={payslipDialogOpen} onOpenChange={setPayslipDialogOpen}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1647,20 +1723,19 @@ export default function PayrollPage() {
                 <Label htmlFor="ps-gross">Bruto</Label>
                 <Input
                   id="ps-gross"
-                  type="number"
-                  min={0}
-                  step="0.01"
+                  type="text"
                   inputMode="decimal"
                   placeholder={payslipEmployeeId ? "0.00" : "—"}
                   value={payslipGross}
                   disabled
+                  readOnly
                   className="bg-muted cursor-not-allowed"
-                  title="Tomado del sueldo del perfil del empleado"
+                  title="Sueldo vigente para el periodo de nómina (historial salarial o perfil)"
                 />
                 <p className="text-xs text-muted-foreground">
                   {payslipEmployeeId
-                    ? "Importe bruto según el sueldo registrado en el perfil del empleado; no se puede editar aquí."
-                    : "Selecciona un empleado para cargar el bruto desde su perfil."}
+                    ? "Importe bruto según sueldo vigente del periodo (historial en Sueldos o valor del perfil); no se puede editar aquí."
+                    : "Selecciona un empleado para cargar el bruto según el periodo seleccionado."}
                 </p>
               </div>
               <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2.5">
@@ -1754,14 +1829,16 @@ export default function PayrollPage() {
                                         <td className="px-2 py-1.5 text-right tabular-nums align-top">
                                           {isOther ? (
                                             <Input
-                                              type="number"
-                                              step="0.01"
+                                              type="text"
+                                              inputMode="decimal"
                                               className="h-8 text-sm text-right"
                                               value={line.amount}
                                               onChange={(e) =>
                                                 setCreateDeductionLines((prev) =>
                                                   prev.map((l) =>
-                                                    l.localId === line.localId ? { ...l, amount: e.target.value } : l,
+                                                    l.localId === line.localId
+                                                      ? { ...l, amount: normalizeMoneyDecimalInput(e.target.value) }
+                                                      : l,
                                                   ),
                                                 )
                                               }
@@ -1820,9 +1897,7 @@ export default function PayrollPage() {
                 <Label htmlFor="ps-net">Neto</Label>
                 <Input
                   id="ps-net"
-                  type="number"
-                  min={0}
-                  step="0.01"
+                  type="text"
                   inputMode="decimal"
                   placeholder="0.00"
                   value={payslipNet}
@@ -1878,9 +1953,7 @@ export default function PayrollPage() {
                 <Label htmlFor="ps-edit-gross">Bruto</Label>
                 <Input
                   id="ps-edit-gross"
-                  type="number"
-                  min={0}
-                  step="0.01"
+                  type="text"
                   inputMode="decimal"
                   placeholder="0.00"
                   value={editPayslipGross}
@@ -1978,14 +2051,16 @@ export default function PayrollPage() {
                                         <td className="px-2 py-1.5 text-right tabular-nums align-top">
                                           {isOther ? (
                                             <Input
-                                              type="number"
-                                              step="0.01"
+                                              type="text"
+                                              inputMode="decimal"
                                               className="h-8 text-sm text-right"
                                               value={line.amount}
                                               onChange={(e) =>
                                                 setEditDeductionLines((prev) =>
                                                   prev.map((l) =>
-                                                    l.localId === line.localId ? { ...l, amount: e.target.value } : l,
+                                                    l.localId === line.localId
+                                                      ? { ...l, amount: normalizeMoneyDecimalInput(e.target.value) }
+                                                      : l,
                                                   ),
                                                 )
                                               }
@@ -2058,9 +2133,7 @@ export default function PayrollPage() {
                 <Label htmlFor="ps-edit-net">Neto</Label>
                 <Input
                   id="ps-edit-net"
-                  type="number"
-                  min={0}
-                  step="0.01"
+                  type="text"
                   inputMode="decimal"
                   placeholder="0.00"
                   value={editPayslipNet}

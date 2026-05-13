@@ -127,8 +127,17 @@ function storageBasename(path: string): string {
 export default function EmployeeProfilePage() {
   const { id } = useParams();
   const { toast } = useToast();
-  const { hasPermission } = useAuth();
-  const canEditEmployee = hasPermission("employees.edit");
+  const { hasPermission, user } = useAuth();
+  const profileEmployeeId = id != null ? Number(id) : NaN;
+  const isOwnProfile = user?.employee?.id != null && !Number.isNaN(profileEmployeeId) && user.employee.id === profileEmployeeId;
+  const canHrEditEmployee = hasPermission("employees.edit");
+  const canSelfServiceProfile = hasPermission("employees.self_edit") && isOwnProfile;
+  const canEditProfile = canHrEditEmployee || canSelfServiceProfile;
+  const canUploadContractDocument = canHrEditEmployee;
+  const canManageDocuments = canHrEditEmployee || canSelfServiceProfile;
+  const canViewEmployeeDirectory = hasPermission("employees.view");
+  const profileListHref = canViewEmployeeDirectory ? "/empleados" : user?.employee?.id != null ? `/empleados/${user.employee.id}` : "/portal";
+  const profileListLabel = canViewEmployeeDirectory ? "Volver a empleados" : "Volver";
   const canViewAttendance = hasPermission("attendance.view");
   const canViewPayroll = hasPermission("payroll.view");
   const canViewAssets = hasPermission("assets.view");
@@ -262,7 +271,8 @@ export default function EmployeeProfilePage() {
   const handleDocumentFileChange = async (ev: React.ChangeEvent<HTMLInputElement>, type: EmployeeDocumentType) => {
     const file = ev.target.files?.[0];
     ev.target.value = "";
-    if (!canEditEmployee || !file || !employee) return;
+    if (!canManageDocuments || !file || !employee) return;
+    if (type === "contract" && !canUploadContractDocument) return;
     setUploadingType(type);
     try {
       await uploadEmployeeDocument(employee.id, type, file);
@@ -330,7 +340,8 @@ export default function EmployeeProfilePage() {
   };
 
   const handleDeleteDocument = async (d: EmployeeDocument) => {
-    if (!employee || !canEditEmployee) return;
+    if (!employee || !canManageDocuments) return;
+    if (!canHrEditEmployee && d.type === "contract") return;
     const ok = window.confirm(`¿Eliminar el documento "${documentTypeLabels[d.type]}"? Esta acción no se puede deshacer.`);
     if (!ok) return;
     setDocumentActionId(d.id);
@@ -504,7 +515,12 @@ export default function EmployeeProfilePage() {
   }, [employee?.id, canViewAssets]);
 
   useEffect(() => {
-    if (!employee?.id) return undefined;
+    if (!employee?.id || !canViewEmployeeDirectory) {
+      setTerminationLoading(false);
+      setTerminationError(null);
+      setTerminationRecord(null);
+      return undefined;
+    }
     let cancelled = false;
     setTerminationLoading(true);
     setTerminationError(null);
@@ -526,13 +542,13 @@ export default function EmployeeProfilePage() {
     return () => {
       cancelled = true;
     };
-  }, [employee?.id]);
+  }, [employee?.id, canViewEmployeeDirectory]);
 
   if (!id) {
     return (
       <p className="text-sm text-muted-foreground">
-        <Link to="/empleados" className="text-primary">
-          Volver a empleados
+        <Link to={profileListHref} className="text-primary">
+          {profileListLabel}
         </Link>
       </p>
     );
@@ -541,8 +557,8 @@ export default function EmployeeProfilePage() {
   if (loading) {
     return (
       <div className="space-y-6 animate-fade-in">
-        <Link to="/empleados" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft className="w-4 h-4" /> Volver a empleados
+        <Link to={profileListHref} className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft className="w-4 h-4" /> {profileListLabel}
         </Link>
         <p className="text-sm text-muted-foreground">Cargando perfil…</p>
       </div>
@@ -552,8 +568,8 @@ export default function EmployeeProfilePage() {
   if (error || !employee) {
     return (
       <div className="space-y-6 animate-fade-in">
-        <Link to="/empleados" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft className="w-4 h-4" /> Volver a empleados
+        <Link to={profileListHref} className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft className="w-4 h-4" /> {profileListLabel}
         </Link>
         <Card className="shadow-card border-destructive/50">
           <CardContent className="p-6 text-sm text-destructive">{error ?? "Empleado no encontrado."}</CardContent>
@@ -576,8 +592,8 @@ export default function EmployeeProfilePage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <Link to="/empleados" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-        <ArrowLeft className="w-4 h-4" /> Volver a empleados
+      <Link to={profileListHref} className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+        <ArrowLeft className="w-4 h-4" /> {profileListLabel}
       </Link>
 
       <Card className="shadow-card">
@@ -599,7 +615,7 @@ export default function EmployeeProfilePage() {
                 <Badge variant={st} className="w-fit">
                   {stLabel}
                 </Badge>
-                {canEditEmployee ? (
+                {canEditProfile ? (
                   <Link to={`/empleados/${e.id}/edit`} className="sm:ml-auto">
                     <Button variant="outline" size="sm" type="button">
                       Editar datos
@@ -700,9 +716,14 @@ export default function EmployeeProfilePage() {
                     className="hidden"
                     onChange={(ev) => void handleDocumentFileChange(ev, "contract")}
                   />
-                  {!canEditEmployee ? (
+                  {!canManageDocuments ? (
                     <p className="text-xs text-muted-foreground">
                       No tienes permiso para subir documentos. Solo lectura.
+                    </p>
+                  ) : null}
+                  {canManageDocuments && !canUploadContractDocument ? (
+                    <p className="text-xs text-muted-foreground">
+                      El contrato en PDF lo gestiona RRHH. Puedes actualizar antecedentes, CV y examen médico.
                     </p>
                   ) : null}
                   <div className="flex flex-wrap gap-2">
@@ -711,7 +732,7 @@ export default function EmployeeProfilePage() {
                       size="sm"
                       className="gap-1.5 text-xs"
                       type="button"
-                      disabled={!canEditEmployee || uploadingType !== null}
+                      disabled={!canManageDocuments || uploadingType !== null}
                       onClick={() => antecedentesInputRef.current?.click()}
                     >
                       <Upload className="w-3.5 h-3.5" />
@@ -722,7 +743,7 @@ export default function EmployeeProfilePage() {
                       size="sm"
                       className="gap-1.5 text-xs"
                       type="button"
-                      disabled={!canEditEmployee || uploadingType !== null}
+                      disabled={!canManageDocuments || uploadingType !== null}
                       onClick={() => cvInputRef.current?.click()}
                     >
                       <Upload className="w-3.5 h-3.5" />
@@ -733,7 +754,7 @@ export default function EmployeeProfilePage() {
                       size="sm"
                       className="gap-1.5 text-xs"
                       type="button"
-                      disabled={!canEditEmployee || uploadingType !== null}
+                      disabled={!canManageDocuments || uploadingType !== null}
                       onClick={() => medicalInputRef.current?.click()}
                     >
                       <Upload className="w-3.5 h-3.5" />
@@ -744,7 +765,7 @@ export default function EmployeeProfilePage() {
                       size="sm"
                       className="gap-1.5 text-xs"
                       type="button"
-                      disabled={!canEditEmployee || uploadingType !== null}
+                      disabled={!canManageDocuments || !canUploadContractDocument || uploadingType !== null}
                       onClick={() => contractInputRef.current?.click()}
                     >
                       <Upload className="w-3.5 h-3.5" />
@@ -800,7 +821,7 @@ export default function EmployeeProfilePage() {
                                 <Download className="w-3.5 h-3.5" />
                                 Descargar
                               </Button>
-                              {canEditEmployee ? (
+                              {(canHrEditEmployee || (canSelfServiceProfile && d.type !== "contract")) ? (
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -821,7 +842,8 @@ export default function EmployeeProfilePage() {
                   )}
                   <p className="text-xs text-muted-foreground">
                     PDF u otros formatos aceptados por el servidor; máx. 10&nbsp;MB por archivo. La descarga y la vista
-                    requieren permiso de lectura del empleado; eliminar requiere permiso de edición.
+                    requieren permiso de lectura del empleado; eliminar documentos propios requiere el permiso de edición
+                    de RRHH o, en tu ficha, permisos de autoedición (excepto contrato).
                   </p>
                 </div>
               </CardContent>
@@ -864,11 +886,16 @@ export default function EmployeeProfilePage() {
           <Card className="shadow-card">
             <CardHeader className="flex flex-row items-center justify-between gap-2">
               <CardTitle className="text-base">Información Laboral</CardTitle>
-              {canEditEmployee ? (
+              {canHrEditEmployee ? (
                 <p className="text-xs text-muted-foreground text-right max-w-xs">
                   Para modificar sueldo u otros datos laborales, usa <span className="font-medium text-foreground">Editar datos</span>{" "}
                   en la cabecera del perfil.
                 </p>
+              ) : canSelfServiceProfile ? (
+                <span className="text-xs text-muted-foreground text-right max-w-xs">
+                  Los datos laborales los actualiza RRHH. Puedes editar datos personales y de contacto desde{" "}
+                  <span className="font-medium text-foreground">Editar datos</span>.
+                </span>
               ) : (
                 <span className="text-xs text-muted-foreground">Solo lectura.</span>
               )}
@@ -1118,7 +1145,12 @@ export default function EmployeeProfilePage() {
               <CardTitle className="text-base">Cese y desvinculación</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {terminationLoading ? (
+              {!canViewEmployeeDirectory ? (
+                <p className="text-sm text-muted-foreground">
+                  El detalle administrativo de desvinculación solo está disponible para quienes gestionan el directorio de
+                  empleados. Si tienes dudas sobre un posible cese, contacta a Recursos Humanos.
+                </p>
+              ) : terminationLoading ? (
                 <p className="text-sm text-muted-foreground">Cargando información de cese…</p>
               ) : terminationError ? (
                 <p className="text-sm text-destructive">{terminationError}</p>
